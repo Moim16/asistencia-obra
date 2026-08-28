@@ -1,0 +1,10 @@
+{
+  "name": "asistencia-obra",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Control de asistencia de albañiles en obra (Vercel + Turso/libSQL)",
+  "dependencies": {
+    "@libsql/client": "^0.17.4"
+  }
+}

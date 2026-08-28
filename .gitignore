@@ -1,0 +1,7 @@
+node_modules/
+.vercel
+.env
+.env*.local
+
+# Base de datos local (SQLite). En produccion se usa Turso.
+/data/

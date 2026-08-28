@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#1f2937"/>
+  <!-- casco de obra -->
+  <path d="M256 128c-62 0-112 50-112 112v40h224v-40c0-62-50-112-112-112z" fill="#e8720c"/>
+  <rect x="112" y="280" width="288" height="40" rx="20" fill="#f59e0b"/>
+  <rect x="236" y="128" width="40" height="90" rx="14" fill="#f59e0b"/>
+  <!-- check -->
+  <path d="M186 384l44 44 96-104" fill="none" stroke="#fff" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

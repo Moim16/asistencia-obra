@@ -1,0 +1,1022 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f2937">
+<title>Asistencia en Obra</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>
+/* ===========================================================================
+   Estilos. Pensados para usarse a pleno sol y con guantes: fondo claro, mucho
+   contraste y botones grandes (minimo 44px de alto).
+   =========================================================================== */
+*, *::before, *::after { box-sizing: border-box; }
+:root {
+  --bg:#f2f4f6; --card:#fff; --ink:#16202c; --muted:#6b7785; --line:#dfe4e9;
+  --accent:#e8720c; --accent-dark:#b95707;
+  --ok:#15803d; --ok-bg:#dcfce7; --half:#b45309; --half-bg:#fef3c7;
+  --bad:#b91c1c; --bad-bg:#fee2e2;
+  --radius:14px; --shadow:0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.1);
+}
+html, body { margin:0; padding:0; }
+body {
+  background:var(--bg); color:var(--ink); font:16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust:100%; padding-bottom:calc(72px + env(safe-area-inset-bottom));
+}
+body.no-nav { padding-bottom:0; }
+button, input, select, textarea { font:inherit; color:inherit; }
+button { cursor:pointer; }
+a { color:var(--accent-dark); }
+.hidden { display:none !important; }
+
+/* ------------------------------------------------------------------ layout */
+.wrap { max-width:720px; margin:0 auto; padding:0 12px; }
+header.top {
+  position:sticky; top:0; z-index:20; background:#1f2937; color:#fff;
+  padding:calc(10px + env(safe-area-inset-top)) 12px 10px;
+}
+header.top .bar { max-width:720px; margin:0 auto; display:flex; align-items:center; gap:10px; }
+header.top .site { flex:1; min-width:0; }
+header.top .site .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:#9ca3af; }
+header.top .site .val {
+  display:flex; align-items:center; gap:6px; font-weight:700; font-size:17px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+header.top button.ghost {
+  background:rgba(255,255,255,.12); border:0; color:#fff; border-radius:10px;
+  padding:8px 12px; font-size:14px; font-weight:600;
+}
+h2 { font-size:19px; margin:18px 0 10px; }
+h3 { font-size:15px; margin:16px 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+
+/* ------------------------------------------------------------- componentes */
+.card { background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); }
+.pad { padding:14px; }
+.row { display:flex; align-items:center; gap:10px; }
+.grow { flex:1; min-width:0; }
+.muted { color:var(--muted); font-size:13px; }
+.ellip { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+.btn {
+  border:1px solid var(--line); background:#fff; border-radius:11px; padding:11px 14px;
+  font-weight:600; font-size:15px; min-height:44px;
+}
+.btn:active { transform:translateY(1px); }
+.btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+.btn.dark { background:#1f2937; border-color:#1f2937; color:#fff; }
+.btn.wide { width:100%; }
+.btn.sm { padding:7px 11px; min-height:36px; font-size:14px; border-radius:9px; }
+.btn.danger { color:var(--bad); border-color:#f3c9c9; }
+.btn[disabled] { opacity:.5; }
+
+.field { display:block; margin:0 0 12px; }
+.field span { display:block; font-size:13px; font-weight:600; color:var(--muted); margin-bottom:5px; }
+.field input, .field select, .field textarea {
+  width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:11px;
+  background:#fff; min-height:44px;
+}
+.field input:focus, .field select:focus { outline:2px solid var(--accent); outline-offset:-1px; }
+
+.msg { border-radius:11px; padding:10px 12px; font-size:14px; margin:10px 0; }
+.msg.err { background:var(--bad-bg); color:var(--bad); }
+.msg.ok  { background:var(--ok-bg); color:var(--ok); }
+
+.empty { text-align:center; color:var(--muted); padding:34px 16px; font-size:14px; }
+
+/* ------------------------------------------------------------ pasar lista */
+.daybar { display:flex; align-items:center; gap:8px; margin:12px 0; }
+.daybar .nav {
+  width:44px; height:44px; border-radius:11px; border:1px solid var(--line);
+  background:#fff; font-size:18px; display:flex; align-items:center; justify-content:center;
+}
+.daybar .day {
+  flex:1; text-align:center; background:#fff; border:1px solid var(--line); border-radius:11px;
+  padding:7px 8px; min-height:44px; display:flex; flex-direction:column; justify-content:center;
+}
+.daybar .day b { font-size:15px; text-transform:capitalize; }
+.daybar .day small { color:var(--muted); font-size:12px; }
+
+.chips { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:12px; }
+.chip {
+  border-radius:999px; padding:5px 11px; font-size:13px; font-weight:700;
+  background:#fff; border:1px solid var(--line);
+}
+.chip.ok   { background:var(--ok-bg);   color:var(--ok);   border-color:transparent; }
+.chip.half { background:var(--half-bg); color:var(--half); border-color:transparent; }
+.chip.bad  { background:var(--bad-bg);  color:var(--bad);  border-color:transparent; }
+
+.wk { border-bottom:1px solid var(--line); padding:11px 13px; }
+.wk:last-child { border-bottom:0; }
+.wk .name { font-weight:600; }
+.wk .sub { font-size:12.5px; color:var(--muted); }
+.marks { display:flex; gap:7px; margin-top:9px; }
+.mark {
+  flex:1; border:1.5px solid var(--line); background:#fff; border-radius:11px;
+  min-height:46px; font-weight:700; font-size:14px; display:flex; align-items:center;
+  justify-content:center; gap:5px; color:var(--muted);
+}
+.mark.on.P { background:var(--ok-bg);   border-color:var(--ok);   color:var(--ok); }
+.mark.on.M { background:var(--half-bg); border-color:var(--half); color:var(--half); }
+.mark.on.A { background:var(--bad-bg);  border-color:var(--bad);  color:var(--bad); }
+.reasons { display:flex; gap:6px; flex-wrap:wrap; margin-top:9px; }
+.reason { border:1px solid var(--line); background:#fff; border-radius:999px; padding:6px 11px; font-size:13px; color:var(--muted); }
+.reason.on { background:#1f2937; border-color:#1f2937; color:#fff; font-weight:600; }
+
+.savebar {
+  position:fixed; left:0; right:0; bottom:calc(60px + env(safe-area-inset-bottom)); z-index:15;
+  padding:9px 12px; background:linear-gradient(to top, var(--bg) 62%, transparent);
+}
+.savebar .inner { max-width:720px; margin:0 auto; }
+
+/* ---------------------------------------------------------------- reporte */
+.tbl { width:100%; border-collapse:collapse; font-size:14px; }
+.tbl th, .tbl td { padding:9px 8px; border-bottom:1px solid var(--line); text-align:right; }
+.tbl th:first-child, .tbl td:first-child { text-align:left; }
+.tbl th { font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:700; }
+.tbl tfoot td { font-weight:800; border-bottom:0; border-top:2px solid var(--line); }
+.tbl td.days { font-weight:800; font-size:15px; }
+.tbl tr.clickable td:first-child { color:var(--accent-dark); }
+.scroll-x { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+
+/* -------------------------------------------------------------- bottom nav */
+nav.bottom {
+  position:fixed; left:0; right:0; bottom:0; z-index:20; background:#fff;
+  border-top:1px solid var(--line); display:flex; padding-bottom:env(safe-area-inset-bottom);
+}
+nav.bottom button {
+  flex:1; border:0; background:none; padding:9px 2px 10px; color:var(--muted);
+  font-size:11px; font-weight:600; display:flex; flex-direction:column; align-items:center; gap:3px;
+}
+nav.bottom button.on { color:var(--accent); }
+nav.bottom svg { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
+
+/* -------------------------------------------------------------------- modal */
+.modal { position:fixed; inset:0; z-index:40; background:rgba(15,23,42,.5); display:flex; align-items:flex-end; }
+.modal .sheet {
+  background:var(--bg); width:100%; max-height:88vh; overflow-y:auto;
+  border-radius:18px 18px 0 0; padding:16px 14px calc(20px + env(safe-area-inset-bottom));
+}
+@media (min-width:640px) {
+  .modal { align-items:center; justify-content:center; }
+  .modal .sheet { max-width:520px; border-radius:18px; }
+}
+.sheet h2 { margin-top:2px; }
+.list-item {
+  display:flex; align-items:center; gap:10px; padding:12px 13px;
+  border-bottom:1px solid var(--line); background:#fff; width:100%; border:0; text-align:left;
+}
+.list-item:last-child { border-bottom:0; }
+.badge { font-size:11px; font-weight:700; padding:2px 7px; border-radius:999px; background:#eef1f4; color:var(--muted); }
+.badge.admin { background:#e0e7ff; color:#3730a3; }
+.badge.off { background:var(--bad-bg); color:var(--bad); }
+</style>
+</head>
+<body class="no-nav">
+
+<!-- ===================== LOGIN ===================== -->
+<section id="login" class="wrap" style="max-width:400px; padding-top:52px;">
+  <div style="text-align:center; margin-bottom:22px;">
+    <div style="font-size:44px; line-height:1;">&#128119;</div>
+    <h1 style="font-size:23px; margin:10px 0 4px;">Asistencia en Obra</h1>
+    <p class="muted" style="margin:0;">Control de días trabajados</p>
+  </div>
+  <form id="loginForm" class="card pad">
+    <label class="field"><span>Usuario</span>
+      <input id="loginName" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+    </label>
+    <label class="field"><span>Contraseña</span>
+      <input id="loginPw" type="password" autocomplete="current-password" required>
+    </label>
+    <button class="btn primary wide" type="submit">Entrar</button>
+    <div id="loginMsg"></div>
+    <p class="muted" style="margin:12px 0 0; text-align:center;">
+      Si es la primera vez que se usa el sistema, el usuario que entre queda como administrador.
+    </p>
+  </form>
+</section>
+
+<!-- ===================== APP ===================== -->
+<div id="app" class="hidden">
+  <header class="top">
+    <div class="bar">
+      <button class="site" id="siteBtn" style="background:none; border:0; color:#fff; text-align:left; padding:0;">
+        <span class="lbl">Obra</span>
+        <span class="val"><span id="siteName" class="ellip">—</span> <span style="font-size:11px; opacity:.7;">&#9660;</span></span>
+      </button>
+      <button class="ghost" id="meBtn">Cuenta</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- ---------------- PASAR LISTA ---------------- -->
+    <section id="viewList">
+      <div class="daybar">
+        <button class="nav" id="dayPrev" aria-label="Día anterior">&#9664;</button>
+        <label class="day" style="position:relative;">
+          <b id="dayLabel">—</b><small id="dayNote"></small>
+          <input type="date" id="dayInput" style="position:absolute; inset:0; opacity:0; width:100%; height:100%; border:0;">
+        </label>
+        <button class="nav" id="dayNext" aria-label="Día siguiente">&#9654;</button>
+      </div>
+
+      <div class="chips" id="summary"></div>
+
+      <div class="row" style="margin-bottom:10px; gap:8px;">
+        <button class="btn sm grow" id="allPresent">Todos presentes</button>
+        <button class="btn sm grow" id="clearAll">Limpiar día</button>
+      </div>
+
+      <div class="card" id="workerList"></div>
+      <div style="height:76px;"></div>
+    </section>
+
+    <!-- ---------------- REPORTE ---------------- -->
+    <section id="viewReport" class="hidden">
+      <h2>Días trabajados</h2>
+      <div class="chips" id="rangeChips"></div>
+      <div class="row" style="gap:8px; margin-bottom:12px;">
+        <label class="field grow" style="margin:0;"><span>Desde</span><input type="date" id="repFrom"></label>
+        <label class="field grow" style="margin:0;"><span>Hasta</span><input type="date" id="repTo"></label>
+      </div>
+      <div class="card pad scroll-x" id="reportBox"><div class="empty">Cargando…</div></div>
+      <button class="btn sm wide" id="csvBtn" style="margin:12px 0 20px;">Descargar CSV</button>
+    </section>
+
+    <!-- ---------------- PERSONAL ---------------- -->
+    <section id="viewStaff" class="hidden">
+      <div class="row" style="margin:18px 0 10px;">
+        <h2 class="grow" style="margin:0;">Personal</h2>
+        <button class="btn sm primary hidden" id="addWorker">+ Agregar</button>
+      </div>
+      <div class="card" id="staffList"></div>
+      <div style="height:20px;"></div>
+    </section>
+
+    <!-- ---------------- AJUSTES ---------------- -->
+    <section id="viewSettings" class="hidden">
+      <h2>Ajustes</h2>
+      <div class="card" id="settingsList"></div>
+      <p class="muted" style="text-align:center; margin:22px 0;">Asistencia en Obra · v1</p>
+    </section>
+  </main>
+
+  <div class="savebar hidden" id="saveBar"><div class="inner">
+    <button class="btn primary wide" id="saveBtn">Guardar lista</button>
+  </div></div>
+
+  <nav class="bottom">
+    <button data-view="list" class="on">
+      <svg viewBox="0 0 24 24"><path d="M9 11l2 2 4-4"/><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M8 2v4M16 2v4"/></svg>
+      Lista
+    </button>
+    <button data-view="report">
+      <svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+      Reporte
+    </button>
+    <button data-view="staff">
+      <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0M17 11a3 3 0 1 0-1.5-5.6M21 20a5 5 0 0 0-3-4.6"/></svg>
+      Personal
+    </button>
+    <button data-view="settings">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>
+      Ajustes
+    </button>
+  </nav>
+</div>
+
+<div id="modalRoot"></div>
+
+<script>
+/* ===========================================================================
+   Estado y utilidades
+   =========================================================================== */
+const S = {
+  token: localStorage.getItem("ao_token") || "",
+  me: JSON.parse(localStorage.getItem("ao_me") || "null"),
+  siteId: Number(localStorage.getItem("ao_site")) || null,
+  sites: [],
+  view: "list",
+  day: todayLocal(),
+  workers: [],          // trabajadores del dia con su marca
+  dirty: new Set(),     // ids con cambios sin guardar
+};
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+// Fecha LOCAL en YYYY-MM-DD (nunca toISOString, que corre al dia UTC).
+function todayLocal(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function shiftDay(day, n) {
+  const [y, m, d] = day.split("-").map(Number);
+  const dt = new Date(y, m - 1, d + n);
+  return todayLocal(dt);
+}
+function prettyDay(day) {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("es", { weekday:"long", day:"numeric", month:"long" });
+}
+function isWeekend(day) {
+  const [y, m, d] = day.split("-").map(Number);
+  const w = new Date(y, m - 1, d).getDay();
+  return w === 0 || w === 6;
+}
+const fmtDays = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+
+/* --------------------------------- API ---------------------------------- */
+async function api(path, { method = "GET", body } = {}) {
+  const res = await fetch(path, {
+    method,
+    headers: {
+      ...(body ? { "content-type": "application/json" } : {}),
+      ...(S.token ? { "x-session-token": S.token } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let data = {};
+  try { data = await res.json(); } catch {}
+  if (res.status === 401 && S.token) { logout(); throw new Error("Sesión expirada. Vuelve a entrar."); }
+  if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+  return data;
+}
+
+function toast(text, kind = "ok") {
+  const el = document.createElement("div");
+  el.className = `msg ${kind}`;
+  el.textContent = text;
+  Object.assign(el.style, {
+    position:"fixed", left:"50%", transform:"translateX(-50%)", bottom:"128px",
+    zIndex:60, maxWidth:"92%", boxShadow:"0 6px 20px rgba(0,0,0,.18)",
+  });
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2600);
+}
+
+/* ===========================================================================
+   Login / sesion
+   =========================================================================== */
+$("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector("button");
+  btn.disabled = true;
+  $("loginMsg").innerHTML = "";
+  try {
+    const r = await api("/api/auth", {
+      method: "POST",
+      body: { name: $("loginName").value.trim(), password: $("loginPw").value },
+    });
+    S.token = r.token; S.me = r.user;
+    localStorage.setItem("ao_token", S.token);
+    localStorage.setItem("ao_me", JSON.stringify(S.me));
+    $("loginPw").value = "";
+    await start();
+  } catch (err) {
+    $("loginMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`;
+  } finally { btn.disabled = false; }
+});
+
+function logout() {
+  S.token = ""; S.me = null; S.dirty.clear();
+  localStorage.removeItem("ao_token");
+  localStorage.removeItem("ao_me");
+  $("app").classList.add("hidden");
+  $("login").classList.remove("hidden");
+  document.body.classList.add("no-nav");
+}
+
+/* ===========================================================================
+   Arranque
+   =========================================================================== */
+async function start() {
+  $("login").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  document.body.classList.remove("no-nav");
+  await loadSites();
+  setView(S.view);
+}
+
+async function loadSites() {
+  const { sites } = await api("/api/sites");
+  S.sites = sites;
+  if (!sites.length) { S.siteId = null; $("siteName").textContent = "Sin obras"; return; }
+  if (!S.siteId || !sites.some((s) => s.id === S.siteId)) S.siteId = sites[0].id;
+  localStorage.setItem("ao_site", S.siteId);
+  $("siteName").textContent = sites.find((s) => s.id === S.siteId).name;
+}
+
+/* ===========================================================================
+   Navegacion
+   =========================================================================== */
+document.querySelectorAll("nav.bottom button").forEach((b) => {
+  b.addEventListener("click", () => setView(b.dataset.view));
+});
+
+function setView(v) {
+  if (S.dirty.size && v !== "list" && !confirm("Tienes marcas sin guardar. ¿Salir igual?")) return;
+  S.view = v;
+  document.querySelectorAll("nav.bottom button").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
+  for (const [name, el] of Object.entries({
+    list: $("viewList"), report: $("viewReport"), staff: $("viewStaff"), settings: $("viewSettings"),
+  })) el.classList.toggle("hidden", name !== v);
+  $("saveBar").classList.toggle("hidden", v !== "list" || !S.dirty.size);
+  window.scrollTo(0, 0);
+
+  if (v === "list") loadDay();
+  if (v === "report") loadReport();
+  if (v === "staff") loadStaff();
+  if (v === "settings") renderSettings();
+}
+
+/* ===========================================================================
+   Vista: pasar lista
+   =========================================================================== */
+const REASONS = ["Falta", "Permiso", "Licencia", "Lluvia", "Feriado", "Accidente"];
+
+$("dayPrev").addEventListener("click", () => goDay(shiftDay(S.day, -1)));
+$("dayNext").addEventListener("click", () => goDay(shiftDay(S.day, 1)));
+$("dayInput").addEventListener("change", (e) => { if (e.target.value) goDay(e.target.value); });
+
+function goDay(day) {
+  if (S.dirty.size && !confirm("Tienes marcas sin guardar. ¿Cambiar de día igual?")) return;
+  S.day = day; S.dirty.clear(); loadDay();
+}
+
+async function loadDay() {
+  $("dayLabel").textContent = prettyDay(S.day);
+  $("dayInput").value = S.day;
+  $("dayNote").textContent =
+    S.day === todayLocal() ? "hoy" : (isWeekend(S.day) ? "fin de semana" : "");
+
+  if (!S.siteId) {
+    $("workerList").innerHTML = `<div class="empty">No hay obras todavía.<br>Créala en <b>Ajustes → Obras</b>.</div>`;
+    $("summary").innerHTML = "";
+    return;
+  }
+  $("workerList").innerHTML = `<div class="empty">Cargando…</div>`;
+  try {
+    const r = await api(`/api/attendance?siteId=${S.siteId}&day=${S.day}`);
+    S.workers = r.workers;
+    S.dirty.clear();
+    renderDay();
+  } catch (err) {
+    $("workerList").innerHTML = `<div class="empty">${esc(err.message)}</div>`;
+  }
+}
+
+function renderDay() {
+  const w = S.workers;
+  if (!w.length) {
+    $("summary").innerHTML = "";
+    $("workerList").innerHTML = `<div class="empty">Esta obra no tiene personal.<br>Agrégalo en <b>Personal</b>.</div>`;
+    $("saveBar").classList.add("hidden");
+    return;
+  }
+  const n = (st) => w.filter((x) => x.status === st).length;
+  const pend = w.length - n("P") - n("M") - n("A");
+  $("summary").innerHTML =
+    `<span class="chip ok">${n("P")} presentes</span>` +
+    `<span class="chip half">${n("M")} medio día</span>` +
+    `<span class="chip bad">${n("A")} faltas</span>` +
+    (pend ? `<span class="chip">${pend} sin marcar</span>` : "") +
+    `<span class="chip">${fmtDays(n("P") + n("M") * 0.5)} jornadas</span>`;
+
+  $("workerList").innerHTML = w.map((x) => `
+    <div class="wk" data-id="${x.id}">
+      <div class="row">
+        <div class="grow">
+          <div class="name ellip">${esc(x.fullName)}</div>
+          <div class="sub ellip">${esc(x.trade || "—")}${x.markedByName ? ` · marcó ${esc(x.markedByName)}` : ""}</div>
+        </div>
+      </div>
+      <div class="marks">
+        ${["P", "M", "A"].map((st) => `
+          <button class="mark ${st} ${x.status === st ? "on" : ""}" data-mark="${st}">
+            ${st === "P" ? "&#10003; Presente" : st === "M" ? "&#189; Medio" : "&#10007; Falta"}
+          </button>`).join("")}
+      </div>
+      ${x.status && x.status !== "P" ? `
+        <div class="reasons">
+          ${REASONS.map((r) => `<button class="reason ${x.reason === r ? "on" : ""}" data-reason="${esc(r)}">${esc(r)}</button>`).join("")}
+        </div>` : ""}
+    </div>`).join("");
+
+  $("saveBar").classList.toggle("hidden", !S.dirty.size || S.view !== "list");
+  $("saveBtn").textContent = S.dirty.size ? `Guardar lista (${S.dirty.size})` : "Guardar lista";
+}
+
+// Delegacion: marcar estado y elegir motivo.
+$("workerList").addEventListener("click", (e) => {
+  const wk = e.target.closest(".wk");
+  if (!wk) return;
+  const id = Number(wk.dataset.id);
+  const w = S.workers.find((x) => x.id === id);
+  if (!w) return;
+
+  const markBtn = e.target.closest("[data-mark]");
+  if (markBtn) {
+    const st = markBtn.dataset.mark;
+    w.status = w.status === st ? null : st;   // volver a tocar el mismo estado lo desmarca
+    if (w.status === "P" || !w.status) w.reason = null;
+    S.dirty.add(id);
+    renderDay();
+    return;
+  }
+  const reasonBtn = e.target.closest("[data-reason]");
+  if (reasonBtn) {
+    const r = reasonBtn.dataset.reason;
+    w.reason = w.reason === r ? null : r;
+    S.dirty.add(id);
+    renderDay();
+  }
+});
+
+$("allPresent").addEventListener("click", () => {
+  S.workers.forEach((w) => { if (!w.status) { w.status = "P"; w.reason = null; S.dirty.add(w.id); } });
+  renderDay();
+});
+$("clearAll").addEventListener("click", () => {
+  if (!confirm("¿Quitar todas las marcas de este día?")) return;
+  S.workers.forEach((w) => { w.status = null; w.reason = null; S.dirty.add(w.id); });
+  renderDay();
+});
+
+$("saveBtn").addEventListener("click", async () => {
+  if (!S.dirty.size) return;
+  const btn = $("saveBtn");
+  btn.disabled = true; btn.textContent = "Guardando…";
+  try {
+    const marks = [...S.dirty].map((id) => {
+      const w = S.workers.find((x) => x.id === id);
+      return { workerId: id, status: w.status || "", reason: w.reason || null };
+    });
+    await api("/api/attendance", { method: "POST", body: { siteId: S.siteId, day: S.day, marks } });
+    S.dirty.clear();
+    toast("Lista guardada");
+    await loadDay();
+  } catch (err) {
+    toast(err.message, "err");
+  } finally { btn.disabled = false; renderDay(); }
+});
+
+/* ===========================================================================
+   Vista: reporte
+   =========================================================================== */
+const RANGES = [
+  ["Esta semana", () => weekRange(0)],
+  ["Semana pasada", () => weekRange(-1)],
+  ["Este mes", () => monthRange(0)],
+  ["Mes pasado", () => monthRange(-1)],
+];
+
+// Semana de lunes a domingo (offset en semanas respecto de la actual).
+function weekRange(off) {
+  const d = new Date();
+  d.setDate(d.getDate() + off * 7);
+  const dow = (d.getDay() + 6) % 7;          // 0 = lunes
+  const from = new Date(d); from.setDate(d.getDate() - dow);
+  const to = new Date(from); to.setDate(from.getDate() + 6);
+  return [todayLocal(from), todayLocal(to)];
+}
+function monthRange(off) {
+  const d = new Date();
+  const from = new Date(d.getFullYear(), d.getMonth() + off, 1);
+  const to = new Date(d.getFullYear(), d.getMonth() + off + 1, 0);
+  return [todayLocal(from), todayLocal(to)];
+}
+
+$("rangeChips").innerHTML = RANGES.map((r, i) =>
+  `<button class="chip" data-range="${i}">${r[0]}</button>`).join("");
+$("rangeChips").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-range]");
+  if (!b) return;
+  const [f, t] = RANGES[Number(b.dataset.range)][1]();
+  $("repFrom").value = f; $("repTo").value = t;
+  loadReport();
+});
+$("repFrom").addEventListener("change", loadReport);
+$("repTo").addEventListener("change", loadReport);
+
+let lastReport = null;
+
+async function loadReport() {
+  if (!$("repFrom").value || !$("repTo").value) {
+    const [f, t] = monthRange(0);
+    $("repFrom").value = f; $("repTo").value = t;
+  }
+  if (!S.siteId) { $("reportBox").innerHTML = `<div class="empty">No hay obras todavía.</div>`; return; }
+  $("reportBox").innerHTML = `<div class="empty">Cargando…</div>`;
+  try {
+    const r = await api(`/api/report?siteId=${S.siteId}&from=${$("repFrom").value}&to=${$("repTo").value}`);
+    lastReport = r;
+    renderReport(r);
+  } catch (err) {
+    $("reportBox").innerHTML = `<div class="empty">${esc(err.message)}</div>`;
+  }
+}
+
+function renderReport(r) {
+  if (!r.rows.length) { $("reportBox").innerHTML = `<div class="empty">Sin datos en este período.</div>`; return; }
+  $("reportBox").innerHTML = `
+    <table class="tbl">
+      <thead><tr>
+        <th>Trabajador</th><th>&#10003;</th><th>&#189;</th><th>&#10007;</th><th>Días</th>
+      </tr></thead>
+      <tbody>
+        ${r.rows.map((x) => `
+          <tr class="clickable" data-w="${x.workerId}">
+            <td class="ellip" style="max-width:150px;">${esc(x.fullName)}${x.active ? "" : ' <span class="badge off">baja</span>'}</td>
+            <td>${x.P}</td><td>${x.M}</td><td>${x.A}</td>
+            <td class="days">${fmtDays(x.worked)}</td>
+          </tr>`).join("")}
+      </tbody>
+      <tfoot><tr>
+        <td>Total (${r.rows.length})</td>
+        <td>${r.totals.P}</td><td>${r.totals.M}</td><td>${r.totals.A}</td>
+        <td>${fmtDays(r.totals.worked)}</td>
+      </tr></tfoot>
+    </table>`;
+}
+
+// Detalle dia a dia de un trabajador.
+$("reportBox").addEventListener("click", (e) => {
+  const tr = e.target.closest("[data-w]");
+  if (!tr || !lastReport) return;
+  const row = lastReport.rows.find((x) => x.workerId === Number(tr.dataset.w));
+  if (!row) return;
+  const label = { P:'<span class="chip ok">Presente</span>', M:'<span class="chip half">Medio día</span>', A:'<span class="chip bad">Falta</span>' };
+  openModal(`
+    <h2>${esc(row.fullName)}</h2>
+    <p class="muted" style="margin:-6px 0 12px;">${lastReport.from} → ${lastReport.to} · <b>${fmtDays(row.worked)} días</b></p>
+    <div class="card">
+      ${lastReport.days.map((d) => {
+        const st = row.marks[d];
+        return `<div class="list-item">
+          <div class="grow"><div style="text-transform:capitalize;">${prettyDay(d)}</div></div>
+          ${st ? label[st] : '<span class="muted">sin marcar</span>'}
+        </div>`;
+      }).join("")}
+    </div>`);
+});
+
+$("csvBtn").addEventListener("click", () => {
+  if (!lastReport || !lastReport.rows.length) return toast("Nada que exportar", "err");
+  const site = S.sites.find((s) => s.id === S.siteId)?.name || "obra";
+  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const lines = [
+    [q("Obra"), q(site)].join(";"),
+    [q("Desde"), q(lastReport.from), q("Hasta"), q(lastReport.to)].join(";"),
+    "",
+    ["Trabajador", "Oficio", "Presentes", "Medio dia", "Faltas", "Dias trabajados"].map(q).join(";"),
+    ...lastReport.rows.map((x) =>
+      [q(x.fullName), q(x.trade || ""), x.P, x.M, x.A, fmtDays(x.worked)].join(";")),
+    [q("TOTAL"), "", lastReport.totals.P, lastReport.totals.M, lastReport.totals.A, fmtDays(lastReport.totals.worked)].join(";"),
+  ];
+  // BOM para que Excel abra bien los acentos.
+  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `asistencia_${site.replace(/[^\w]+/g, "-")}_${lastReport.from}_${lastReport.to}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+});
+
+/* ===========================================================================
+   Vista: personal
+   =========================================================================== */
+async function loadStaff() {
+  $("addWorker").classList.toggle("hidden", S.me?.role !== "admin");
+  if (!S.siteId) { $("staffList").innerHTML = `<div class="empty">No hay obras todavía.</div>`; return; }
+  $("staffList").innerHTML = `<div class="empty">Cargando…</div>`;
+  try {
+    const { workers } = await api(`/api/workers?siteId=${S.siteId}&all=1`);
+    if (!workers.length) {
+      $("staffList").innerHTML = `<div class="empty">Sin personal en esta obra.</div>`;
+      return;
+    }
+    $("staffList").innerHTML = workers.map((w) => `
+      <button class="list-item" data-w="${w.id}">
+        <div class="grow">
+          <div class="ellip"><b>${esc(w.fullName)}</b>${w.active ? "" : ' <span class="badge off">baja</span>'}</div>
+          <div class="muted ellip">${esc(w.trade || "—")}${w.docId ? " · " + esc(w.docId) : ""}</div>
+        </div>
+        ${S.me?.role === "admin" ? '<span class="muted">editar &#8250;</span>' : ""}
+      </button>`).join("");
+    $("staffList").querySelectorAll("[data-w]").forEach((b) => {
+      b.addEventListener("click", () => {
+        if (S.me?.role !== "admin") return;
+        workerForm(workers.find((w) => w.id === Number(b.dataset.w)));
+      });
+    });
+  } catch (err) {
+    $("staffList").innerHTML = `<div class="empty">${esc(err.message)}</div>`;
+  }
+}
+
+$("addWorker").addEventListener("click", () => workerForm(null));
+
+function workerForm(w) {
+  const isNew = !w;
+  openModal(`
+    <h2>${isNew ? "Nuevo trabajador" : "Editar trabajador"}</h2>
+    <form id="wForm" class="card pad">
+      <label class="field"><span>Nombre completo *</span><input id="wName" value="${esc(w?.fullName || "")}" required maxlength="80"></label>
+      <label class="field"><span>Oficio</span>
+        <input id="wTrade" value="${esc(w?.trade || "")}" list="trades" maxlength="40" placeholder="Albañil, ayudante, maestro…">
+        <datalist id="trades">
+          ${["Maestro albañil","Albañil","Ayudante","Jornalero","Carpintero","Fierrero","Electricista","Gasfíter","Pintor","Capataz"]
+            .map((t) => `<option value="${t}">`).join("")}
+        </datalist>
+      </label>
+      <label class="field"><span>Documento (RUT / DNI)</span><input id="wDoc" value="${esc(w?.docId || "")}" maxlength="30"></label>
+      <label class="field"><span>Teléfono</span><input id="wPhone" type="tel" value="${esc(w?.phone || "")}" maxlength="30"></label>
+      ${isNew ? "" : `
+        <label class="field"><span>Obra</span>
+          <select id="wSite">${S.sites.map((s) => `<option value="${s.id}" ${s.id === w.siteId ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>
+        </label>
+        <label class="row" style="margin-bottom:12px; gap:8px;">
+          <input type="checkbox" id="wActive" ${w.active ? "checked" : ""} style="width:20px; height:20px;">
+          <span>Activo en la obra</span>
+        </label>`}
+      <div id="wMsg"></div>
+      <button class="btn primary wide" type="submit">${isNew ? "Agregar" : "Guardar"}</button>
+    </form>
+    ${isNew ? "" : `<button class="btn danger wide" id="wDel" style="margin-top:10px;">Dar de baja</button>`}
+  `);
+
+  $("wForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = {
+      fullName: $("wName").value, trade: $("wTrade").value,
+      docId: $("wDoc").value, phone: $("wPhone").value,
+    };
+    if (!isNew) { body.siteId = Number($("wSite").value); body.active = $("wActive").checked; }
+    else body.siteId = S.siteId;
+    try {
+      await api(isNew ? "/api/workers" : `/api/workers?id=${w.id}`, { method: isNew ? "POST" : "PUT", body });
+      closeModal(); toast(isNew ? "Trabajador agregado" : "Guardado");
+      loadStaff(); loadSites();
+    } catch (err) { $("wMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`; }
+  });
+
+  if (!isNew) $("wDel").addEventListener("click", async () => {
+    if (!confirm(`¿Dar de baja a ${w.fullName}? Su historial se conserva.`)) return;
+    try {
+      await api(`/api/workers?id=${w.id}`, { method: "DELETE" });
+      closeModal(); toast("Trabajador dado de baja"); loadStaff(); loadSites();
+    } catch (err) { toast(err.message, "err"); }
+  });
+}
+
+/* ===========================================================================
+   Vista: ajustes
+   =========================================================================== */
+function renderSettings() {
+  const admin = S.me?.role === "admin";
+  $("settingsList").innerHTML = `
+    <div class="list-item">
+      <div class="grow">
+        <div><b>${esc(S.me?.name || "")}</b> <span class="badge ${admin ? "admin" : ""}">${admin ? "Administrador" : "Capataz"}</span></div>
+        <div class="muted">${esc(S.me?.fullName || "Sin nombre completo")}</div>
+      </div>
+    </div>
+    <button class="list-item" data-act="sites"><div class="grow">Obras</div><span class="muted">&#8250;</span></button>
+    ${admin ? `<button class="list-item" data-act="users"><div class="grow">Usuarios del sistema</div><span class="muted">&#8250;</span></button>` : ""}
+    <button class="list-item" data-act="pw"><div class="grow">Cambiar mi contraseña</div><span class="muted">&#8250;</span></button>
+    <button class="list-item" data-act="out"><div class="grow" style="color:var(--bad);">Cerrar sesión</div></button>`;
+
+  $("settingsList").querySelectorAll("[data-act]").forEach((b) => {
+    b.addEventListener("click", () => ({
+      sites: sitesScreen, users: usersScreen, pw: passwordScreen,
+      out: () => { if (confirm("¿Cerrar sesión?")) logout(); },
+    }[b.dataset.act]()));
+  });
+}
+
+/* ------------------------------- obras ---------------------------------- */
+async function sitesScreen() {
+  const admin = S.me?.role === "admin";
+  const { sites } = await api("/api/sites" + (admin ? "?all=1" : ""));
+  S.sites = sites.filter((s) => s.active);
+  openModal(`
+    <h2>Obras</h2>
+    <div class="card">
+      ${sites.length ? sites.map((s) => `
+        <button class="list-item" data-s="${s.id}">
+          <div class="grow">
+            <div class="ellip"><b>${esc(s.name)}</b>${s.active ? "" : ' <span class="badge off">cerrada</span>'}</div>
+            <div class="muted ellip">${esc(s.address || "—")} · ${s.workers} trabajador${s.workers === 1 ? "" : "es"}</div>
+          </div>
+          ${admin ? '<span class="muted">editar &#8250;</span>' : ""}
+        </button>`).join("") : '<div class="empty">Sin obras.</div>'}
+    </div>
+    ${admin ? `<button class="btn primary wide" id="addSite" style="margin-top:12px;">+ Nueva obra</button>` : ""}
+  `);
+  $("modalRoot").querySelectorAll("[data-s]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const s = sites.find((x) => x.id === Number(b.dataset.s));
+      admin ? siteForm(s) : pickSite(s);
+    });
+  });
+  if (admin) $("addSite").addEventListener("click", () => siteForm(null));
+}
+
+function siteForm(s) {
+  const isNew = !s;
+  openModal(`
+    <h2>${isNew ? "Nueva obra" : "Editar obra"}</h2>
+    <form id="sForm" class="card pad">
+      <label class="field"><span>Nombre *</span><input id="sName" value="${esc(s?.name || "")}" required maxlength="80" placeholder="Edificio Los Aromos"></label>
+      <label class="field"><span>Dirección</span><input id="sAddr" value="${esc(s?.address || "")}" maxlength="160"></label>
+      ${isNew ? "" : `
+        <label class="row" style="margin-bottom:12px; gap:8px;">
+          <input type="checkbox" id="sActive" ${s.active ? "checked" : ""} style="width:20px; height:20px;">
+          <span>Obra en curso</span>
+        </label>`}
+      <div id="sMsg"></div>
+      <button class="btn primary wide" type="submit">${isNew ? "Crear" : "Guardar"}</button>
+    </form>
+    ${isNew || !s.active ? "" : `<button class="btn wide" id="sPick" style="margin-top:10px;">Trabajar en esta obra</button>`}
+  `);
+  $("sForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = { name: $("sName").value, address: $("sAddr").value };
+    if (!isNew) body.active = $("sActive").checked;
+    try {
+      const r = await api(isNew ? "/api/sites" : `/api/sites?id=${s.id}`, { method: isNew ? "POST" : "PUT", body });
+      await loadSites();
+      if (isNew && r.site) { S.siteId = r.site.id; localStorage.setItem("ao_site", S.siteId); await loadSites(); }
+      closeModal(); toast(isNew ? "Obra creada" : "Guardado"); setView(S.view);
+    } catch (err) { $("sMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`; }
+  });
+  if (!isNew && s.active) $("sPick").addEventListener("click", () => pickSite(s));
+}
+
+function pickSite(s) {
+  S.siteId = s.id;
+  localStorage.setItem("ao_site", S.siteId);
+  $("siteName").textContent = s.name;
+  S.dirty.clear();
+  closeModal();
+  setView("list");
+}
+
+// Selector rapido de obra desde la barra superior.
+$("siteBtn").addEventListener("click", async () => {
+  const active = S.sites.filter((s) => s.active !== 0);
+  if (!active.length) return sitesScreen();
+  openModal(`
+    <h2>Cambiar de obra</h2>
+    <div class="card">
+      ${active.map((s) => `
+        <button class="list-item" data-p="${s.id}">
+          <div class="grow">
+            <div class="ellip"><b>${esc(s.name)}</b></div>
+            <div class="muted">${s.workers} trabajador${s.workers === 1 ? "" : "es"}</div>
+          </div>
+          ${s.id === S.siteId ? '<span class="badge admin">actual</span>' : ""}
+        </button>`).join("")}
+    </div>
+    <button class="btn wide" id="manageSites" style="margin-top:12px;">Administrar obras</button>
+  `);
+  $("modalRoot").querySelectorAll("[data-p]").forEach((b) => {
+    b.addEventListener("click", () => pickSite(active.find((s) => s.id === Number(b.dataset.p))));
+  });
+  $("manageSites").addEventListener("click", sitesScreen);
+});
+
+/* ------------------------------ usuarios -------------------------------- */
+async function usersScreen() {
+  const { users } = await api("/api/auth");
+  openModal(`
+    <h2>Usuarios del sistema</h2>
+    <p class="muted" style="margin:-6px 0 12px;">Quienes entran a la app. Los albañiles no necesitan usuario.</p>
+    <div class="card">
+      ${users.map((u) => `
+        <button class="list-item" data-u="${u.id}">
+          <div class="grow">
+            <div class="ellip"><b>${esc(u.name)}</b>${u.active ? "" : ' <span class="badge off">inactivo</span>'}</div>
+            <div class="muted ellip">${esc(u.fullName || "—")}</div>
+          </div>
+          <span class="badge ${u.role === "admin" ? "admin" : ""}">${u.role === "admin" ? "Admin" : "Capataz"}</span>
+        </button>`).join("")}
+    </div>
+    <button class="btn primary wide" id="addUser" style="margin-top:12px;">+ Nuevo usuario</button>
+  `);
+  $("modalRoot").querySelectorAll("[data-u]").forEach((b) => {
+    b.addEventListener("click", () => userForm(users.find((u) => u.id === Number(b.dataset.u))));
+  });
+  $("addUser").addEventListener("click", () => userForm(null));
+}
+
+function userForm(u) {
+  const isNew = !u;
+  openModal(`
+    <h2>${isNew ? "Nuevo usuario" : esc(u.name)}</h2>
+    <form id="uForm" class="card pad">
+      ${isNew ? `<label class="field"><span>Usuario * (sin espacios)</span>
+        <input id="uName" required maxlength="20" autocapitalize="none" spellcheck="false"></label>` : ""}
+      <label class="field"><span>Nombre completo</span><input id="uFull" value="${esc(u?.fullName || "")}" maxlength="80"></label>
+      <label class="field"><span>Rol</span>
+        <select id="uRole">
+          <option value="foreman" ${u?.role !== "admin" ? "selected" : ""}>Capataz — pasa lista y ve reportes</option>
+          <option value="admin" ${u?.role === "admin" ? "selected" : ""}>Administrador — además gestiona obras y personal</option>
+        </select>
+      </label>
+      <label class="field"><span>${isNew ? "Contraseña * (mínimo 6)" : "Nueva contraseña (dejar vacío para no cambiar)"}</span>
+        <input id="uPw" type="password" ${isNew ? "required" : ""} minlength="6" maxlength="64" autocomplete="new-password"></label>
+      ${isNew ? "" : `
+        <label class="row" style="margin-bottom:12px; gap:8px;">
+          <input type="checkbox" id="uActive" ${u.active ? "checked" : ""} style="width:20px; height:20px;">
+          <span>Usuario activo</span>
+        </label>`}
+      <div id="uMsg"></div>
+      <button class="btn primary wide" type="submit">${isNew ? "Crear" : "Guardar"}</button>
+    </form>
+  `);
+  $("uForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      if (isNew) {
+        await api("/api/auth?new=1", { method: "POST", body: {
+          name: $("uName").value.trim(), password: $("uPw").value,
+          fullName: $("uFull").value, role: $("uRole").value,
+        }});
+      } else {
+        const body = { fullName: $("uFull").value, role: $("uRole").value, active: $("uActive").checked };
+        if ($("uPw").value) body.password = $("uPw").value;
+        await api(`/api/auth?id=${u.id}`, { method: "PUT", body });
+      }
+      closeModal(); toast("Guardado"); usersScreen();
+    } catch (err) { $("uMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`; }
+  });
+}
+
+/* --------------------------- mi contraseña ------------------------------ */
+function passwordScreen() {
+  openModal(`
+    <h2>Cambiar mi contraseña</h2>
+    <form id="pForm" class="card pad">
+      <label class="field"><span>Contraseña actual</span><input id="pOld" type="password" required autocomplete="current-password"></label>
+      <label class="field"><span>Nueva contraseña (mínimo 6)</span><input id="pNew" type="password" required minlength="6" maxlength="64" autocomplete="new-password"></label>
+      <div id="pMsg"></div>
+      <button class="btn primary wide" type="submit">Cambiar</button>
+    </form>`);
+  $("pForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api("/api/auth", { method: "PUT", body: {
+        currentPassword: $("pOld").value, password: $("pNew").value,
+      }});
+      if (r.token) { S.token = r.token; localStorage.setItem("ao_token", r.token); }
+      closeModal(); toast("Contraseña cambiada");
+    } catch (err) { $("pMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`; }
+  });
+}
+
+$("meBtn").addEventListener("click", () => setView("settings"));
+
+/* ===========================================================================
+   Modal
+   =========================================================================== */
+function openModal(html) {
+  $("modalRoot").innerHTML = `
+    <div class="modal">
+      <div class="sheet">
+        <button class="btn sm" id="modalClose" style="float:right; margin-left:10px;">Cerrar</button>
+        ${html}
+      </div>
+    </div>`;
+  $("modalClose").addEventListener("click", closeModal);
+  $("modalRoot").querySelector(".modal").addEventListener("click", (e) => {
+    if (e.target.classList.contains("modal")) closeModal();
+  });
+}
+function closeModal() { $("modalRoot").innerHTML = ""; }
+
+/* ===========================================================================
+   Inicio
+   =========================================================================== */
+window.addEventListener("beforeunload", (e) => {
+  if (S.dirty.size) { e.preventDefault(); e.returnValue = ""; }
+});
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
+(async () => {
+  if (!S.token) return;
+  try {
+    const { me } = await api("/api/auth");
+    S.me = me;
+    localStorage.setItem("ao_me", JSON.stringify(me));
+    await start();
+  } catch { logout(); }
+})();
+</script>
+</body>
+</html>
