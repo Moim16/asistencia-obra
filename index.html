@@ -251,6 +251,17 @@ h3 { font-size:11px; font-weight:600; margin:22px 0 8px; color:var(--faint); tex
 }
 .savebar .inner { max-width:640px; margin:0 auto; }
 
+/* --------------------------------------------------- estado de conexion --
+   Solo aparece cuando hay algo que decir: sin señal, o marcas sin enviar. */
+.syncbar {
+  display:flex; align-items:center; gap:9px; margin:12px 0 0; padding:10px 12px;
+  border-radius:var(--r-sm); font-size:13px; font-weight:500;
+  background:var(--half-bg); color:var(--half); border:1px solid var(--half-line);
+}
+.syncbar.off { background:var(--soft); color:var(--muted); border-color:var(--line); }
+.syncbar svg { width:16px; height:16px; }
+.syncbar .btn { min-height:32px; padding:5px 11px; font-size:12.5px; }
+
 /* ---------------------------------------------------------------- reporte */
 .tbl { width:100%; border-collapse:collapse; font-size:14.5px; }
 .tbl th, .tbl td { padding:12px 8px; border-bottom:1px solid var(--line); text-align:right; }
@@ -427,6 +438,8 @@ nav.bottom svg { width:21px; height:21px; }
   </header>
 
   <main class="wrap">
+    <div id="syncBar" class="syncbar hidden"></div>
+
     <!-- ---------------- PASAR LISTA ---------------- -->
     <section id="viewList">
       <div class="daybar">
@@ -507,6 +520,8 @@ const S = {
   day: todayLocal(),
   workers: [],          // trabajadores del dia con su marca
   dirty: new Set(),     // ids con cambios sin guardar
+  offline: false,       // la ultima llamada al servidor no llego
+  syncing: false,       // hay una sincronizacion en curso
 };
 
 const $ = (id) => document.getElementById(id);
@@ -569,6 +584,8 @@ const ICONS = {
   edit:      '<path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z"/>',
   info:      '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.1"/>',
   calendar:  '<rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/>',
+  offline:   '<path d="M2 2l20 20M5.2 12.6a11 11 0 0 1 3.6-2.3M2 8.9A16 16 0 0 1 6.6 6.2M17.4 6.2A16 16 0 0 1 22 8.9M15.2 10.3a11 11 0 0 1 3.6 2.3M8.6 16a6 6 0 0 1 6.8 0M12 19.8h.01"/>',
+  cloud:     '<path d="M7.3 17.5a4.5 4.5 0 0 1 .4-9 6 6 0 0 1 11.4 1.7A4 4 0 0 1 18 17.5"/><path d="M12 11.5V20M9 14.5l3-3 3 3"/>',
   user:      '<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
   down:      '<path d="M5 9l7 7 7-7"/>',
   inbox:     '<path d="M3 13h5l1.5 3h5L16 13h5"/><path d="M5.2 4.5h13.6a2 2 0 0 1 1.9 1.4L22 13v5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-5l1.3-7.1a2 2 0 0 1 1.9-1.4z"/>',
@@ -606,14 +623,26 @@ function applyTheme(t) {
 
 /* --------------------------------- API ---------------------------------- */
 async function api(path, { method = "GET", body } = {}) {
-  const res = await fetch(path, {
-    method,
-    headers: {
-      ...(body ? { "content-type": "application/json" } : {}),
-      ...(S.token ? { "x-session-token": S.token } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(path, {
+      method,
+      headers: {
+        ...(body ? { "content-type": "application/json" } : {}),
+        ...(S.token ? { "x-session-token": S.token } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    // La peticion no llego a salir: no hay red. Se marca con `offline` para que
+    // quien llama pueda tirar del cache o encolar, en vez de tratarlo como error.
+    S.offline = true;
+    renderSyncBar();
+    const e = new Error("Sin conexión.");
+    e.offline = true;
+    throw e;
+  }
+  if (S.offline) { S.offline = false; renderSyncBar(); }   // volvio la señal
   let data = {};
   try { data = await res.json(); } catch {}
   if (res.status === 401 && S.token) { logout(); throw new Error("Sesión expirada. Vuelve a entrar."); }
@@ -669,6 +698,128 @@ function ask({ title, text = "", ok = "Aceptar", cancel = "Cancelar", danger = f
 }
 
 /* ===========================================================================
+   Trabajar sin conexion
+
+   En obra la señal es mala, asi que la app no puede depender de la red para
+   pasar lista:
+
+   - Lo que se ve se guarda en el telefono (obras, personal del dia, ultimo
+     estado conocido de cada fecha). Sin red se muestra eso.
+   - Lo que se marca sin red va a una COLA. La cola manda sobre lo que diga el
+     cache: es lo mas nuevo que sabe este telefono.
+   - Al volver la señal se envia sola (y tambien con el boton "Sincronizar").
+
+   La cola guarda una entrada por (obra, dia, trabajador): volver a marcar al
+   mismo pisa la anterior, no se acumulan. Si el envio falla, la entrada se
+   CONSERVA: nunca se descarta una marca en silencio.
+   =========================================================================== */
+const QUEUE_KEY = "ao_queue";
+const dayKey = (siteId, day) => `ao_day_${siteId}_${day}`;
+
+const store = {
+  get(k, def = null) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch { return def; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
+};
+
+const queueGet = () => store.get(QUEUE_KEY, []);
+
+// Agrega o pisa marcas en la cola. Devuelve cuantas quedan pendientes.
+function queueAdd(siteId, day, marks) {
+  const q = queueGet();
+  for (const m of marks) {
+    const i = q.findIndex((x) => x.siteId === siteId && x.day === day && x.workerId === m.workerId);
+    const entry = { siteId, day, workerId: m.workerId, status: m.status || "", reason: m.reason || null, at: Date.now() };
+    if (i >= 0) q[i] = entry; else q.push(entry);
+  }
+  store.set(QUEUE_KEY, q);
+  return q.length;
+}
+
+// Vuelca sobre la lista en pantalla las marcas pendientes de ESTE dia y obra.
+function applyQueueTo(workers) {
+  const pend = queueGet().filter((e) => e.siteId === S.siteId && e.day === S.day);
+  for (const e of pend) {
+    const w = workers.find((x) => x.id === e.workerId);
+    if (!w) continue;
+    w.status = e.status || null;
+    w.reason = e.reason || null;
+    w.pending = true;
+  }
+  return pend.length;
+}
+
+// Envia la cola agrupada por (obra, dia): una sola llamada por lista.
+async function syncQueue({ silent = true } = {}) {
+  const q = queueGet();
+  if (!q.length || S.syncing) return 0;
+  S.syncing = true;
+  renderSyncBar();
+
+  const groups = new Map();
+  for (const e of q) {
+    const k = `${e.siteId}|${e.day}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  }
+
+  let done = 0;
+  const left = [];
+  for (const [k, entries] of groups) {
+    const [siteId, day] = k.split("|");
+    try {
+      await api("/api/attendance", { method: "POST", body: {
+        siteId: Number(siteId), day,
+        marks: entries.map((e) => ({ workerId: e.workerId, status: e.status, reason: e.reason })),
+      }});
+      done += entries.length;
+    } catch (err) {
+      // Falle por lo que falle (sin red, sesion vencida, servidor caido), la
+      // marca se conserva y se reintenta despues. Perderla seria peor.
+      left.push(...entries);
+      if (!silent && !err.offline) toast(err.message, "err");
+    }
+  }
+  store.set(QUEUE_KEY, left);
+  S.syncing = false;
+  renderSyncBar();
+  if (done && !silent) toast(plural(done, "marca sincronizada", "marcas sincronizadas"));
+  return done;
+}
+
+// Barra de estado: solo aparece si hay algo que decir (sin red o cola pendiente).
+function renderSyncBar() {
+  const el = $("syncBar");
+  if (!el) return;
+  const n = queueGet().length;
+  const off = S.offline || !navigator.onLine;
+  if (!n && !off) { el.classList.add("hidden"); return; }
+
+  el.className = `syncbar ${off ? "off" : ""}`;
+  el.innerHTML =
+    icon(off ? "offline" : "cloud") +
+    `<span class="grow">${
+      S.syncing ? "Sincronizando…"
+      : off ? (n ? `Sin conexión · ${plural(n, "marca guardada aquí", "marcas guardadas aquí")}`
+                 : "Sin conexión · puedes seguir pasando lista")
+      : plural(n, "marca sin enviar", "marcas sin enviar")
+    }</span>` +
+    (n && !off && !S.syncing ? `<button class="btn sm" id="syncNow">Sincronizar</button>` : "");
+
+  const b = $("syncNow");
+  if (b) b.addEventListener("click", async () => {
+    if (await syncQueue({ silent: false }) && S.view === "list") loadDay();
+  });
+}
+
+// Al recuperar la señal se envia sola; al perderla, solo se avisa.
+addEventListener("online", async () => {
+  S.offline = false;
+  renderSyncBar();
+  if (await syncQueue({ silent: false }) && S.view === "list") loadDay();
+});
+addEventListener("offline", () => { S.offline = true; renderSyncBar(); });
+
+/* ===========================================================================
    Login / sesion
    =========================================================================== */
 $("loginForm").addEventListener("submit", async (e) => {
@@ -713,7 +864,14 @@ async function start() {
 }
 
 async function loadSites() {
-  const { sites } = await api("/api/sites");
+  let sites;
+  try {
+    ({ sites } = await api("/api/sites"));
+    store.set("ao_sites", sites);            // para poder elegir obra sin red
+  } catch (err) {
+    if (!err.offline) throw err;
+    sites = store.get("ao_sites", []);
+  }
   S.sites = sites;
   if (!sites.length) { S.siteId = null; $("siteName").textContent = "Sin obras"; return; }
   if (!S.siteId || !sites.some((s) => s.id === S.siteId)) S.siteId = sites[0].id;
@@ -784,11 +942,26 @@ async function loadDay() {
   try {
     const r = await api(`/api/attendance?siteId=${S.siteId}&day=${S.day}`);
     S.workers = r.workers;
-    S.dirty.clear();
-    renderDay();
+    store.set(dayKey(S.siteId, S.day), r.workers);   // ultimo estado conocido
   } catch (err) {
-    $("workerList").innerHTML = `<div class="empty">${esc(err.message)}</div>`;
+    if (!err.offline) {
+      $("workerList").innerHTML = emptyState("info", esc(err.message));
+      return;
+    }
+    const cached = store.get(dayKey(S.siteId, S.day));
+    if (!cached) {
+      $("workerList").innerHTML = emptyState("offline",
+        "Sin conexión y este día nunca se abrió en este teléfono.<br>Vuelve a intentarlo con señal.");
+      $("summary").innerHTML = "";
+      renderSyncBar();
+      return;
+    }
+    S.workers = cached.map((w) => ({ ...w }));
   }
+  applyQueueTo(S.workers);        // lo pendiente manda sobre lo del servidor
+  S.dirty.clear();
+  renderDay();
+  renderSyncBar();
 }
 
 function renderDay() {
@@ -814,7 +987,9 @@ function renderDay() {
       <div class="row">
         <div class="grow">
           <div class="name ellip">${esc(x.fullName)}</div>
-          <div class="sub ellip">${esc(x.trade || "—")}${x.markedByName ? ` · marcó ${esc(x.markedByName)}` : ""}</div>
+          <div class="sub ellip">${esc(x.trade || "—")}${
+            x.pending ? ' · <b style="color:var(--half);">sin enviar</b>'
+                      : x.markedByName ? ` · marcó ${esc(x.markedByName)}` : ""}</div>
         </div>
       </div>
       <div class="marks">
@@ -878,17 +1053,26 @@ $("saveBtn").addEventListener("click", async () => {
   if (!S.dirty.size) return;
   const btn = $("saveBtn");
   btn.disabled = true; btn.textContent = "Guardando…";
+  // Fuera del try a proposito: el catch tambien necesita `marks` para encolarlas
+  // cuando no hay red (una `const` dentro del try no se ve desde el catch).
+  const marks = [...S.dirty].map((id) => {
+    const w = S.workers.find((x) => x.id === id);
+    return { workerId: id, status: w.status || "", reason: w.reason || null };
+  });
   try {
-    const marks = [...S.dirty].map((id) => {
-      const w = S.workers.find((x) => x.id === id);
-      return { workerId: id, status: w.status || "", reason: w.reason || null };
-    });
     await api("/api/attendance", { method: "POST", body: { siteId: S.siteId, day: S.day, marks } });
     S.dirty.clear();
     toast("Lista guardada");
     await loadDay();
   } catch (err) {
-    toast(err.message, "err");
+    if (!err.offline) { toast(err.message, "err"); return; }
+    // Sin red la lista NO se pierde: queda en el telefono y se envia despues.
+    queueAdd(S.siteId, S.day, marks);
+    S.dirty.clear();
+    applyQueueTo(S.workers);
+    store.set(dayKey(S.siteId, S.day), S.workers);
+    toast("Guardado aquí. Se enviará al volver la señal.");
+    renderSyncBar();
   } finally { btn.disabled = false; renderDay(); }
 });
 
@@ -953,7 +1137,9 @@ async function loadReport() {
     renderReport(r);
     markActiveRange();
   } catch (err) {
-    $("reportBox").innerHTML = `<div class="empty">${esc(err.message)}</div>`;
+    $("reportBox").innerHTML = err.offline
+      ? emptyState("offline", "El reporte necesita conexión.<br>Pasar lista sí funciona sin señal.")
+      : emptyState("info", esc(err.message));
   }
 }
 
@@ -1051,7 +1237,9 @@ async function loadStaff() {
       });
     });
   } catch (err) {
-    $("staffList").innerHTML = `<div class="empty">${esc(err.message)}</div>`;
+    $("staffList").innerHTML = err.offline
+      ? emptyState("offline", "La lista de personal necesita conexión.")
+      : emptyState("info", esc(err.message));
   }
 }
 
@@ -1183,7 +1371,14 @@ function renderSettings() {
       users: usersScreen,
       pw: passwordScreen,
       out: async () => {
-        if (await ask({ title: "¿Cerrar sesión?", ok: "Cerrar sesión", cancel: "Cancelar", danger: true })) logout();
+        const n = queueGet().length;
+        if (await ask({
+          title: "¿Cerrar sesión?",
+          // Las marcas sin enviar quedan guardadas, pero solo se pueden mandar
+          // volviendo a entrar con este mismo usuario.
+          text: n ? `Quedan ${plural(n, "marca sin enviar", "marcas sin enviar")}. Se guardan en este teléfono, pero para enviarlas hay que volver a entrar.` : "",
+          ok: "Cerrar sesión", cancel: "Cancelar", danger: true,
+        })) logout();
       },
     }[b.dataset.act]()));
   });
@@ -1415,13 +1610,20 @@ if ("serviceWorker" in navigator) {
 }
 
 (async () => {
+  renderSyncBar();
   if (!S.token) return;
   try {
     const { me } = await api("/api/auth");
     S.me = me;
     localStorage.setItem("ao_me", JSON.stringify(me));
     await start();
-  } catch { logout(); }
+    syncQueue();                 // por si quedo algo de la ultima vez
+  } catch (err) {
+    // Sin red se entra con la sesion guardada: la app tiene que servir en obra
+    // aunque no haya señal. El token se revalida en la primera llamada con red.
+    if (err.offline && S.me) { await start(); return; }
+    logout();
+  }
 })();
 </script>
 </body>

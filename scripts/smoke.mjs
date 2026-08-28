@@ -39,6 +39,15 @@ const day = (n) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
+// La suite arranca creando el primer admin, asi que exige una base VACIA. Sin
+// este aviso, correrla sobre datos existentes da tres fallos sin explicacion.
+const yaHayUsuarios = Number((await db.execute("SELECT COUNT(*) c FROM users")).rows[0].c);
+if (yaHayUsuarios) {
+  console.error(`\nLa base ya tiene ${yaHayUsuarios} usuario(s). Estas pruebas necesitan una base VACIA.`);
+  console.error("Vaciala primero (o usa otra base) y vuelve a correrlas.\n");
+  process.exit(1);
+}
+
 // --- 1. bootstrap admin -----------------------------------------------------
 let r = await call(auth, { method: "POST", body: { name: "jefe", password: "obra1234" } });
 check("bootstrap crea admin", r.status === 201 && r.body.user.role === "admin", JSON.stringify(r.body));
