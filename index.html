@@ -132,6 +132,19 @@ header.top .site .val {
   letter-spacing:-.015em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 header.top .site .val svg { color:var(--faint); width:13px; height:13px; }
+header.top .brand {
+  width:32px; height:32px; border-radius:8px; object-fit:cover; flex:none;
+  border:1px solid var(--line); background:var(--card);
+}
+.brand-lg {
+  width:56px; height:56px; border-radius:12px; object-fit:cover; flex:none;
+  border:1px solid var(--line); background:var(--card);
+}
+.brand-ph {   /* marcador cuando todavia no hay logo */
+  display:flex; align-items:center; justify-content:center;
+  color:var(--faint); background:var(--soft);
+}
+.brand-ph svg { width:24px; height:24px; }
 header.top button.ghost {
   background:none; border:1px solid var(--line-2); color:var(--ink); border-radius:999px;
   padding:7px 12px; font-size:13px; font-weight:500; display:flex; align-items:center; gap:6px;
@@ -434,6 +447,7 @@ nav.bottom svg { width:21px; height:21px; }
 <div id="app" class="hidden">
   <header class="top">
     <div class="bar">
+      <img id="brandLogo" class="brand hidden" alt="">
       <button class="site" id="siteBtn" style="background:none; border:0; color:inherit; text-align:left; padding:0;">
         <span class="lbl">Obra</span>
         <span class="val"><span id="siteName" class="ellip">—</span><span id="siteChev"></span></span>
@@ -547,6 +561,71 @@ function shiftDay(day, n) {
   return ymd(new Date(y, m - 1, d + n));
 }
 
+/* ---------------------------------- logo ---------------------------------
+   La foto de la empresa se guarda como data URI JPEG dentro de la cuenta: son
+   unos pocos KB, viaja con la sesion y sirve sin conexion.
+
+   Se convierte SIEMPRE a JPEG, y sobre fondo blanco. Es el unico formato que se
+   puede incrustar tal cual en un PDF (filtro DCTDecode), asi que asi el mismo
+   archivo sirve para la pantalla y para el papel.
+-------------------------------------------------------------------------- */
+const LOGO_MAX = 320;                 // lado mayor, en pixeles
+
+async function fileToLogo(file) {
+  if (!file.type.startsWith("image/")) throw new Error("Elige una imagen.");
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    await new Promise((ok, fail) => {
+      img.onload = ok;
+      img.onerror = () => fail(new Error("No se pudo leer la imagen."));
+      img.src = url;
+    });
+    const escala = Math.min(1, LOGO_MAX / Math.max(img.width, img.height));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(img.width * escala));
+    c.height = Math.max(1, Math.round(img.height * escala));
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff";                     // JPEG no tiene transparencia
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.85);
+  } finally { URL.revokeObjectURL(url); }
+}
+
+// data URI -> cadena binaria (un caracter por byte), que es como escribe el PDF.
+function dataUriToBinary(uri) {
+  try { return atob(String(uri).split(",")[1] || ""); } catch { return ""; }
+}
+
+// Ancho y alto leidos del propio JPEG (marcador SOF). Evita guardar las medidas
+// aparte: cualquier logo ya almacenado se puede medir igual.
+function jpegSize(bin) {
+  for (let i = 2; i + 9 < bin.length; ) {
+    if (bin.charCodeAt(i) !== 0xFF) { i++; continue; }
+    const m = bin.charCodeAt(i + 1);
+    if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) {
+      return {
+        h: (bin.charCodeAt(i + 5) << 8) | bin.charCodeAt(i + 6),
+        w: (bin.charCodeAt(i + 7) << 8) | bin.charCodeAt(i + 8),
+      };
+    }
+    const len = (bin.charCodeAt(i + 2) << 8) | bin.charCodeAt(i + 3);
+    if (len <= 0) break;
+    i += 2 + len;
+  }
+  return null;
+}
+
+// Logo listo para el PDF, o null si la cuenta no tiene.
+function logoParaPdf() {
+  const uri = S.account?.logo;
+  if (!uri) return null;
+  const bin = dataUriToBinary(uri);
+  const size = bin && jpegSize(bin);
+  return size ? { bin, ...size } : null;
+}
+
 /* --------------------------------- dinero -------------------------------- */
 // Cordoba nicaraguense. Sin decimales cuando el monto es redondo.
 const nfMoney = new Intl.NumberFormat("es-NI", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -618,6 +697,7 @@ const ICONS = {
   edit:      '<path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z"/>',
   info:      '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.1"/>',
   calendar:  '<rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/>',
+  image:     '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="8.5" cy="10" r="1.8"/><path d="M3.5 17l4.5-4.5 3.5 3.5 3-3 6 6"/>',
   whatsapp:  '<path d="M3.5 20.5l1.3-4.6a8.2 8.2 0 1 1 3.1 3l-4.4 1.6z"/><path d="M9 9.2c.2 1 .7 2 1.5 2.8s1.8 1.3 2.8 1.5l.9-1.2 1.9.8c-.2 1-1.1 1.6-2.1 1.5a7.4 7.4 0 0 1-6.1-6.1c-.1-1 .5-1.9 1.5-2.1l.8 1.9-1.2.9z"/>',
   offline:   '<path d="M2 2l20 20M5.2 12.6a11 11 0 0 1 3.6-2.3M2 8.9A16 16 0 0 1 6.6 6.2M17.4 6.2A16 16 0 0 1 22 8.9M15.2 10.3a11 11 0 0 1 3.6 2.3M8.6 16a6 6 0 0 1 6.8 0M12 19.8h.01"/>',
   cloud:     '<path d="M7.3 17.5a4.5 4.5 0 0 1 .4-9 6 6 0 0 1 11.4 1.7A4 4 0 0 1 18 17.5"/><path d="M12 11.5V20M9 14.5l3-3 3 3"/>',
@@ -908,11 +988,21 @@ function logout() {
   document.body.classList.add("no-nav");
 }
 
+// Muestra el logo de la empresa en la cabecera (o lo esconde si no hay).
+function paintBrand() {
+  const el = $("brandLogo");
+  if (!el) return;
+  const uri = S.account?.logo;
+  if (uri) { el.src = uri; el.alt = S.account?.name || ""; el.classList.remove("hidden"); }
+  else { el.removeAttribute("src"); el.classList.add("hidden"); }
+}
+
 /* ===========================================================================
    Arranque
    =========================================================================== */
 async function start() {
   $("meBtn").textContent = initials(S.me?.fullName || S.me?.name);
+  paintBrand();
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
   document.body.classList.remove("no-nav");
@@ -1179,8 +1269,11 @@ function fitText(str, size, max) {
 }
 
 class MiniPdf {
-  constructor() {
+  // `logo` = { bin, w, h } con el JPEG crudo. Se incrusta una sola vez y se
+  // referencia desde todas las paginas.
+  constructor({ logo = null } = {}) {
     this.W = 595; this.H = 842;      // A4 en puntos
+    this.logo = logo;
     this.pages = [];
     this.newPage();
   }
@@ -1202,6 +1295,14 @@ class MiniPdf {
     this.buf.push(`${gray} G ${width} w ${x1.toFixed(2)} ${(this.H - y1).toFixed(2)} m ${x2.toFixed(2)} ${(this.H - y2).toFixed(2)} l S`);
     return this;
   }
+  // Dibuja el logo conservando su proporcion dentro de la caja (w x h).
+  image(x, y, w, h) {
+    if (!this.logo) return this;
+    const escala = Math.min(w / this.logo.w, h / this.logo.h);
+    const iw = this.logo.w * escala, ih = this.logo.h * escala;
+    this.buf.push(`q ${iw.toFixed(2)} 0 0 ${ih.toFixed(2)} ${x.toFixed(2)} ${(this.H - y - ih).toFixed(2)} cm /Im0 Do Q`);
+    return this;
+  }
   rect(x, y, w, h, gray = 0.95) {
     this.buf.push(`${gray} g ${x.toFixed(2)} ${(this.H - y - h).toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f`);
     return this;
@@ -1216,13 +1317,25 @@ class MiniPdf {
     const f1 = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
     const f2 = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
 
+    // El JPEG entra tal cual: DCTDecode es justamente el filtro JPEG del PDF,
+    // asi que no hay que descomprimir ni recodificar nada.
+    let imgN = 0;
+    if (this.logo) {
+      imgN = add(
+        `<< /Type /XObject /Subtype /Image /Width ${this.logo.w} /Height ${this.logo.h} ` +
+        `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${this.logo.bin.length} >>\n` +
+        `stream\n${this.logo.bin}\nendstream`
+      );
+    }
+
     const pageIds = [];
     for (const buf of this.pages) {
       const stream = buf.join("\n");
       const contN = add(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
       pageIds.push(add(
         `<< /Type /Page /Parent ${pagesN} 0 R /MediaBox [0 0 ${this.W} ${this.H}] ` +
-        `/Resources << /Font << /F1 ${f1} 0 R /F2 ${f2} 0 R >> >> /Contents ${contN} 0 R >>`
+        `/Resources << /Font << /F1 ${f1} 0 R /F2 ${f2} 0 R >>` +
+        (imgN ? ` /XObject << /Im0 ${imgN} 0 R >>` : "") + ` >> /Contents ${contN} 0 R >>`
       ));
     }
     objs[catalogN - 1] = `<< /Type /Catalog /Pages ${pagesN} 0 R >>`;
@@ -1250,11 +1363,12 @@ class MiniPdf {
 const M = 45;                 // margen
 const FONT_OK = (t) => String(t ?? "").replace(/[^\x20-\xFF]/g, "?");   // fuera de WinAnsi
 
-// Encabezado comun: empresa, obra y periodo.
+// Encabezado comun: logo, empresa, obra y periodo.
 function pdfHeader(doc, titulo, sub) {
   doc.text(M, M + 6, FONT_OK(S.account?.name || "Asistencia en Obra"), { size: 9, gray: 0.45 });
   doc.text(M, M + 30, FONT_OK(titulo), { size: 19, bold: true });
   doc.text(M, M + 48, FONT_OK(sub), { size: 9.5, gray: 0.4 });
+  doc.image(595 - M - 46, M - 6, 46, 46);       // logo arriba a la derecha
   doc.line(M, M + 58, 595 - M, M + 58);
   return M + 84;              // y donde sigue el contenido
 }
@@ -1266,18 +1380,18 @@ function pdfFooter(doc, pag) {
 
 // Reporte de la obra completa.
 function reportPdf(r) {
-  const doc = new MiniPdf();
+  const doc = new MiniPdf({ logo: logoParaPdf() });
   const obra = S.sites.find((x) => x.id === S.siteId)?.name || "Obra";
   let y = pdfHeader(doc, obra, `Del ${r.from} al ${r.to}`);
   let pag = 1;
 
-  const cols = [M, 300, 375, 452, 595 - M];   // nombre | dias | ganado | pagado | pendiente
+  const cols = [M, 285, 360, 435, 595 - M];   // nombre | dias | ganado | abonos | a recibir
   const head = () => {
     doc.text(cols[0], y, "TRABAJADOR", { size: 7.5, bold: true, gray: 0.45 });
     doc.text(cols[1], y, "DÍAS", { size: 7.5, bold: true, gray: 0.45, align: "right" });
     doc.text(cols[2], y, "GANADO", { size: 7.5, bold: true, gray: 0.45, align: "right" });
-    doc.text(cols[3], y, "PAGADO", { size: 7.5, bold: true, gray: 0.45, align: "right" });
-    doc.text(cols[4], y, "PENDIENTE", { size: 7.5, bold: true, gray: 0.45, align: "right" });
+    doc.text(cols[3], y, "ABONOS", { size: 7.5, bold: true, gray: 0.45, align: "right" });
+    doc.text(cols[4], y, "A RECIBIR", { size: 7.5, bold: true, gray: 0.45, align: "right" });
     y += 6; doc.line(M, y, 595 - M, y); y += 15;
   };
   head();
@@ -1286,10 +1400,10 @@ function reportPdf(r) {
     if (y > 842 - 70) {                       // salto de pagina
       pdfFooter(doc, pag++); doc.newPage(); y = pdfHeader(doc, obra, `Del ${r.from} al ${r.to}`); head();
     }
-    doc.text(cols[0], y, FONT_OK(fitText(x.fullName + (x.active ? "" : " (baja)"), 9.5, 240)), { size: 9.5 });
+    doc.text(cols[0], y, FONT_OK(fitText(x.fullName + (x.active ? "" : " (baja)"), 9.5, 225)), { size: 9.5 });
     doc.text(cols[1], y, fmtDays(x.worked), { size: 9.5, align: "right" });
     doc.text(cols[2], y, money(x.earned), { size: 9.5, align: "right" });
-    doc.text(cols[3], y, x.paid ? money(x.paid) : "-", { size: 9.5, align: "right", gray: 0.45 });
+    doc.text(cols[3], y, x.advances ? "-" + money(x.advances) : "-", { size: 9.5, align: "right", gray: 0.45 });
     doc.text(cols[4], y, x.pending ? money(x.pending) : "al día", { size: 9.5, align: "right", bold: !!x.pending });
     y += 8; doc.line(M, y, 595 - M, y, { gray: 0.92 }); y += 14;
   }
@@ -1299,16 +1413,20 @@ function reportPdf(r) {
   doc.text(cols[0], y, `TOTAL (${r.rows.length})`, { size: 10, bold: true });
   doc.text(cols[1], y, fmtDays(r.totals.worked), { size: 10, bold: true, align: "right" });
   doc.text(cols[2], y, money(r.totals.earned), { size: 10, bold: true, align: "right" });
-  doc.text(cols[3], y, money(r.totals.paid), { size: 10, bold: true, align: "right" });
+  doc.text(cols[3], y, r.totals.advances ? "-" + money(r.totals.advances) : "-", { size: 10, bold: true, align: "right" });
   doc.text(cols[4], y, money(r.totals.pending), { size: 10, bold: true, align: "right" });
+  if (r.days.length <= 8) {          // solo tiene sentido en un rango semanal
+    y += 20;
+    doc.text(M, y, `Día de pago: ${FONT_OK(prettyDay(sabadoDe(r.from)))}`, { size: 8.5, gray: 0.45 });
+  }
   pdfFooter(doc, pag);
 
   return { blob: doc.blob(), name: `reporte_${obra.replace(/[^\w]+/g, "-")}_${r.from}_${r.to}.pdf` };
 }
 
 // Detalle de un trabajador: lo que trabajo dia a dia y cuanto le toca.
-function workerPdf(row, r) {
-  const doc = new MiniPdf();
+function workerPdf(row, r, abonos = null) {
+  const doc = new MiniPdf({ logo: logoParaPdf() });
   const obra = S.sites.find((x) => x.id === S.siteId)?.name || "Obra";
   let y = pdfHeader(doc, FONT_OK(row.fullName), `${FONT_OK(obra)} · del ${r.from} al ${r.to}`);
   let pag = 1;
@@ -1318,7 +1436,7 @@ function workerPdf(row, r) {
   const cajas = [
     ["Días trabajados", fmtDays(row.worked)],
     ["Total ganado", money(row.earned)],
-    ["Ya pagado", money(row.paid)],
+    ["Abonos", row.advances ? "-" + money(row.advances) : money(0)],
     ["A recibir", money(row.pending)],
   ];
   const anchoCaja = (595 - 2 * M) / cajas.length;
@@ -1328,6 +1446,11 @@ function workerPdf(row, r) {
     doc.text(cx, y + 22, FONT_OK(val), { size: 13, bold: i === 3, align: "center" });
   });
   y += 62;
+
+  if (row.paid) {
+    doc.text(M, y, `Ya pagado antes: ${money(row.paid)}`, { size: 8.5, gray: 0.45 });
+    y += 16;
+  }
 
   const ESTADO = { P: "Presente", M: "Medio día", A: "Falta" };
   const cols = [M, 330, 440, 595 - M];
@@ -1355,6 +1478,18 @@ function workerPdf(row, r) {
     y += 8; doc.line(M, y, 595 - M, y, { gray: 0.92 }); y += 14;
   }
   if (!dias.length) doc.text(M, y, "Sin días marcados en este período.", { size: 9.5, gray: 0.5 });
+
+  if (abonos && abonos.length) {
+    y += 18;
+    if (y > 842 - 90) { pdfFooter(doc, pag++); doc.newPage(); y = M + 40; }
+    doc.text(M, y, "ABONOS ENTREGADOS", { size: 7.5, bold: true, gray: 0.45 });
+    y += 6; doc.line(M, y, 595 - M, y); y += 14;
+    for (const a of abonos) {
+      doc.text(M, y, FONT_OK(a.day + (a.note ? " · " + a.note : "")), { size: 9.5 });
+      doc.text(595 - M, y, "-" + money(a.amount), { size: 9.5, align: "right" });
+      y += 8; doc.line(M, y, 595 - M, y, { gray: 0.92 }); y += 14;
+    }
+  }
   pdfFooter(doc, pag);
 
   const slug = row.fullName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w]+/g, "-");
@@ -1370,46 +1505,68 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
-// Manda el PDF por WhatsApp. En el celular se abre el menu de compartir con el
-// archivo adjunto; donde no se pueda adjuntar (computador), va el resumen en
-// texto, que para eso se arma igual.
-async function shareWhatsApp(blob, name, texto) {
-  try {
-    const file = new File([blob], name, { type: "application/pdf" });
-    if (navigator.canShare?.({ files: [file] })) {
-      await navigator.share({ files: [file], title: name, text: texto });
-      return;
-    }
-  } catch (err) {
-    if (err?.name === "AbortError") return;      // el usuario cerro el menu
+// Manda el PDF adjunto. OJO: WhatsApp DESCARTA el texto cuando recibe un
+// archivo, asi que aqui NO se manda texto; para eso esta shareTexto(). Mezclar
+// los dos hacia que siempre se perdiera uno.
+async function sharePdf(blob, name) {
+  const file = new File([blob], name, { type: "application/pdf" });
+  if (!navigator.canShare?.({ files: [file] })) {
+    // Sin soporte para adjuntar (tipico en computador): se descarga y se avisa.
+    download(blob, name);
+    toast("Tu equipo no puede adjuntar directo. Se descargó el PDF para que lo adjuntes.");
+    return;
   }
+  try {
+    await navigator.share({ files: [file], title: name });
+  } catch (err) {
+    if (err?.name !== "AbortError") toast("No se pudo compartir el archivo.", "err");
+  }
+}
+
+// Manda el resumen como mensaje. wa.me abre WhatsApp con el texto ya escrito y
+// deja elegir el contacto; funciona igual en celular y en computador.
+function shareTexto(texto) {
   window.open("https://wa.me/?text=" + encodeURIComponent(texto), "_blank", "noopener");
-  toast("Se abrió WhatsApp con el resumen. El PDF lo puedes descargar aparte.");
 }
 
 // Resumen en texto: lo que de verdad importa saber.
 function resumenTexto(row, r) {
   const obra = S.sites.find((x) => x.id === S.siteId)?.name || "la obra";
-  return [
+  const empresa = S.account?.name ? S.account.name + "\n" : "";
+  return empresa + [
     `*${row.fullName}* — ${obra}`,
     `Período: ${r.from} al ${r.to}`,
     ``,
     `Días trabajados: ${fmtDays(row.worked)}`,
     `Total ganado: ${money(row.earned)}`,
     row.paid ? `Ya pagado: ${money(row.paid)}` : null,
+    row.advances ? `Abonos entregados: -${money(row.advances)}` : null,
+    ``,
     `*A recibir: ${money(row.pending)}*`,
-  ].filter(Boolean).join("\n");
+  ].filter((x) => x !== null).join("\n");
 }
 
 /* ===========================================================================
    Vista: reporte
    =========================================================================== */
+// El dia de pago es el SABADO. La semana de pago va de lunes a domingo para no
+// dejar afuera ningun dia trabajado; el sabado es cuando se entrega la plata.
+const PAYDAY = 6;                       // 0=domingo ... 6=sabado
+
 const RANGES = [
-  ["Esta semana", () => weekRange(0)],
+  ["Semana de pago", () => weekRange(0)],
   ["Semana pasada", () => weekRange(-1)],
   ["Este mes", () => monthRange(0)],
   ["Mes pasado", () => monthRange(-1)],
 ];
+
+// Sabado de la semana que cubre el rango elegido, para poder decir cuando se paga.
+function sabadoDe(from) {
+  const [y, m, d] = from.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + ((PAYDAY - dt.getDay()) + 7) % 7);
+  return ymd(dt);
+}
 
 // Semana de lunes a domingo (offset en semanas respecto de la actual).
 function weekRange(off) {
@@ -1482,10 +1639,19 @@ function renderReport(r) {
 
   // Pestaña PAGOS: lo que gano, lo que ya cobro y lo que falta pagarle.
   if (S.repTab === "pay") {
+    // El dia de pago solo se anuncia si el rango es una semana: en un rango de
+    // dos meses no significa nada.
+    const esSemana = r.days.length <= 8;
     $("reportBox").innerHTML = `
-      <table class="tbl">
+      <div class="row" style="margin-bottom:12px; gap:8px;">
+        <span class="muted grow">${esSemana
+          ? `Día de pago: <b class="cap" style="color:var(--ink);">${prettyDay(sabadoDe(r.from))}</b>`
+          : `${r.rows.length} ${r.rows.length === 1 ? "trabajador" : "trabajadores"}`}</span>
+        ${S.me?.role === "admin" ? `<button class="btn sm" id="advBtn">${icon("plus")}Abono</button>` : ""}
+      </div>
+      <div class="scroll-x"><table class="tbl">
         <thead><tr>
-          <th>Trabajador</th><th>Días</th><th>Ganado</th><th>Pagado</th><th>Pendiente</th>
+          <th>Trabajador</th><th>Días</th><th>Ganado</th><th>Abonos</th><th>A recibir</th>
         </tr></thead>
         <tbody>
           ${r.rows.map((x) => `
@@ -1493,8 +1659,9 @@ function renderReport(r) {
               <td class="ellip">${esc(x.fullName)}${x.active ? "" : ' <span class="badge off">baja</span>'}</td>
               <td>${fmtDays(x.worked)}</td>
               <td>${money(x.earned)}</td>
-              <td>${x.paid ? money(x.paid) : "—"}</td>
-              <td class="days" style="${x.pending ? "" : "color:var(--faint);font-weight:500;"}">${
+              <td style="${x.advances ? "color:var(--half);" : ""}">${x.advances ? "-" + money(x.advances) : "—"}</td>
+              <td class="days" style="${
+                x.pending < 0 ? "color:var(--bad);" : x.pending ? "" : "color:var(--faint);font-weight:500;"}">${
                 x.pending ? money(x.pending) : "al día"}</td>
             </tr>`).join("")}
         </tbody>
@@ -1502,10 +1669,12 @@ function renderReport(r) {
           <td>Total (${r.rows.length})</td>
           <td>${fmtDays(r.totals.worked)}</td>
           <td>${money(r.totals.earned)}</td>
-          <td>${money(r.totals.paid)}</td>
+          <td>${r.totals.advances ? "-" + money(r.totals.advances) : "—"}</td>
           <td>${money(r.totals.pending)}</td>
         </tr></tfoot>
-      </table>`;
+      </table></div>`;
+    const ab = $("advBtn");
+    if (ab) ab.addEventListener("click", () => advanceForm());
     return;
   }
 
@@ -1553,25 +1722,35 @@ function workerDetail(workerId) {
     <p class="muted" style="margin:-6px 0 14px;">${lastReport.from} → ${lastReport.to}</p>
 
     <div class="card pad" style="margin-bottom:14px;">
-      <div class="row" style="gap:0; text-align:center;">
-        <div class="grow"><div class="muted">Días</div><div style="font-size:19px; font-weight:600;">${fmtDays(row.worked)}</div></div>
-        <div class="grow"><div class="muted">Ganado</div><div style="font-size:19px; font-weight:600;">${money(row.earned)}</div></div>
-        <div class="grow"><div class="muted">Pendiente</div><div style="font-size:19px; font-weight:600; ${
-          row.pending ? "" : "color:var(--faint);"}">${money(row.pending)}</div></div>
+      <div class="row" style="gap:0; text-align:center; align-items:flex-start;">
+        <div class="grow"><div class="muted">Días</div><div style="font-size:18px; font-weight:600;">${fmtDays(row.worked)}</div></div>
+        <div class="grow"><div class="muted">Ganado</div><div style="font-size:18px; font-weight:600;">${money(row.earned)}</div></div>
+        ${row.paid ? `<div class="grow"><div class="muted">Pagado</div><div style="font-size:18px; font-weight:600; color:var(--faint);">${money(row.paid)}</div></div>` : ""}
+        ${row.advances ? `<div class="grow"><div class="muted">Abonos</div><div style="font-size:18px; font-weight:600; color:var(--half);">-${money(row.advances)}</div></div>` : ""}
+        <div class="grow"><div class="muted">A recibir</div><div style="font-size:18px; font-weight:600; ${
+          row.pending < 0 ? "color:var(--bad);" : row.pending ? "" : "color:var(--faint);"}">${money(row.pending)}</div></div>
       </div>
+      ${row.pending < 0 ? `<p class="muted" style="margin:10px 0 0; text-align:center; color:var(--bad);">
+        Se le adelantó más de lo que trabajó. El saldo queda a favor y se descuenta la próxima vez.</p>` : ""}
     </div>
 
     <div class="row" style="gap:8px; margin-bottom:8px;">
-      <button class="btn grow" id="wsBtn">${icon("whatsapp")}Enviar</button>
-      <button class="btn grow" id="pdfWBtn">${icon("download")}PDF</button>
+      <button class="btn grow" id="wsTxtBtn">${icon("whatsapp")}Resumen</button>
+      <button class="btn grow" id="wsPdfBtn">${icon("whatsapp")}PDF</button>
+      <button class="btn" id="pdfWBtn" aria-label="Descargar PDF">${icon("download")}</button>
     </div>
 
+    ${admin ? `<button class="btn wide" id="addAdvBtn" style="margin-bottom:8px;">
+      ${icon("plus")}Registrar abono</button>` : ""}
+
     ${admin ? `
-      ${row.pending > 0 ? `<button class="btn primary wide" id="payBtn" style="margin-bottom:8px;">
+      ${(row.earned - row.paid) > 0 ? `<button class="btn primary wide" id="payBtn" style="margin-bottom:8px;">
         ${icon("check")}Marcar como pagado (${money(row.pending)})</button>` : ""}
       ${row.paid > 0 ? `<button class="btn danger wide" id="unpayBtn" style="margin-bottom:8px;">
         Deshacer el pago del período</button>` : ""}
     ` : ""}
+
+    <div id="advList"></div>
 
     <h3>Día a día</h3>
     <div class="card">
@@ -1587,14 +1766,65 @@ function workerDetail(workerId) {
       }).join("")}
     </div>`);
 
-  $("pdfWBtn").addEventListener("click", () => {
-    const { blob, name } = workerPdf(row, lastReport);
+  // Los abonos se piden al vuelo para que salgan detallados en el PDF; si no hay
+  // red, el PDF sale igual con el total que ya trae el reporte.
+  const armarPdf = async () => {
+    let abonos = null;
+    try {
+      abonos = (await api(
+        `/api/advances?siteId=${S.siteId}&workerId=${workerId}&from=${lastReport.from}&to=${lastReport.to}`
+      )).advances.filter((a) => !a.settled);
+    } catch { /* sin conexion */ }
+    return workerPdf(row, lastReport, abonos);
+  };
+
+  $("pdfWBtn").addEventListener("click", async () => {
+    const { blob, name } = await armarPdf();
     download(blob, name);
   });
-  $("wsBtn").addEventListener("click", () => {
-    const { blob, name } = workerPdf(row, lastReport);
-    shareWhatsApp(blob, name, resumenTexto(row, lastReport));
+  $("wsPdfBtn").addEventListener("click", async () => {
+    const { blob, name } = await armarPdf();
+    sharePdf(blob, name);
   });
+  $("wsTxtBtn").addEventListener("click", () => shareTexto(resumenTexto(row, lastReport)));
+
+  const aa = $("addAdvBtn");
+  if (aa) aa.addEventListener("click", () => advanceForm(row.workerId));
+
+  // Los abonos del trabajador se piden aparte: el reporte solo trae el total.
+  (async () => {
+    try {
+      const { advances } = await api(
+        `/api/advances?siteId=${S.siteId}&workerId=${workerId}&from=${lastReport.from}&to=${lastReport.to}`);
+      const box = $("advList");
+      if (!box) return;
+      if (!advances.length) { box.innerHTML = ""; return; }
+      box.innerHTML = `
+        <h3>Abonos del período</h3>
+        <div class="card">
+          ${advances.map((a) => `
+            <div class="list-item">
+              <div class="grow">
+                <div><b>${money(a.amount)}</b> ${a.settled ? '<span class="badge">descontado</span>' : ""}</div>
+                <div class="muted ellip">${esc(a.day)}${a.note ? " · " + esc(a.note) : ""}${a.byName ? " · " + esc(a.byName) : ""}</div>
+              </div>
+              ${admin && !a.settled ? `<button class="btn sm danger" data-adv="${a.id}">Quitar</button>` : ""}
+            </div>`).join("")}
+        </div>`;
+      box.querySelectorAll("[data-adv]").forEach((b) => {
+        b.addEventListener("click", async () => {
+          if (!(await ask({ title: "¿Quitar este abono?", ok: "Quitar", cancel: "Cancelar", danger: true }))) return;
+          try {
+            await api(`/api/advances?id=${b.dataset.adv}`, { method: "DELETE" });
+            toast("Abono quitado");
+            closeModal();
+            await loadReport();
+            workerDetail(workerId);
+          } catch (err) { toast(err.message, "err"); }
+        });
+      });
+    } catch { /* sin conexion: el detalle se muestra igual sin los abonos */ }
+  })();
 
   const pagar = async (deshacer) => {
     const q = `siteId=${S.siteId}&workerId=${workerId}&from=${lastReport.from}&to=${lastReport.to}`;
@@ -1603,9 +1833,11 @@ function workerDetail(workerId) {
         ? await api(`/api/payments?${q}`, { method: "DELETE" })
         : await api("/api/payments", { method: "POST", body: {
             siteId: S.siteId, workerId, from: lastReport.from, to: lastReport.to } });
-      toast(r.days
-        ? `${plural(r.days, "día", "días")} ${deshacer ? "sin pagar de nuevo" : "marcados como pagados"}`
-        : "No había nada que cambiar");
+      toast(deshacer
+        ? (r.days ? `${plural(r.days, "día", "días")} sin pagar de nuevo` : "No había nada que deshacer")
+        : (r.days || r.advances
+            ? `Pagado: ${money(r.net)}${r.advances ? ` (${money(r.amount)} menos ${money(r.advances)} de abonos)` : ""}`
+            : "No había nada que cambiar"));
       closeModal();
       await loadReport();
       workerDetail(workerId);          // se vuelve a abrir con los numeros nuevos
@@ -1615,8 +1847,14 @@ function workerDetail(workerId) {
   const pb = $("payBtn");
   if (pb) pb.addEventListener("click", async () => {
     if (await ask({
-      title: `¿Marcar como pagado?`,
-      text: `Se registran ${money(row.pending)} pagados a ${row.fullName} por el período ${lastReport.from} → ${lastReport.to}. El monto queda congelado: si después le subes el pago por día, esto no cambia.`,
+      title: "¿Marcar como pagado?",
+      text: [
+        `${row.fullName}, del ${lastReport.from} al ${lastReport.to}.`,
+        `Días trabajados: ${money(row.earned - row.paid)}.`,
+        row.advances ? `Menos abonos ya entregados: ${money(row.advances)}.` : "",
+        `Se le entrega en mano: ${money(row.pending)}.`,
+        "El monto queda congelado: si después le subes el pago por día, esto no cambia.",
+      ].filter(Boolean).join(" "),
       ok: "Marcar pagado", cancel: "Cancelar",
     })) pagar(false);
   });
@@ -1849,9 +2087,23 @@ function renderSettings() {
             <b class="ellip">${esc(S.me?.name || "")}</b>
             <span class="badge ${admin ? "admin" : ""}">${admin ? "Admin" : "Capataz"}</span>
           </div>
-          <div class="muted ellip">${esc(S.account?.name || S.me?.fullName || "—")}</div>
+          <div class="muted ellip">${esc(S.me?.fullName || "Sin nombre completo")}</div>
         </div>
       </div>
+    </div>
+
+    <h3>Empresa</h3>
+    <div class="card">
+      <div class="me-row">
+        ${S.account?.logo
+          ? `<img class="brand-lg" src="${esc(S.account.logo)}" alt="">`
+          : `<div class="brand-lg brand-ph">${icon("building")}</div>`}
+        <div class="grow">
+          <div class="ellip"><b>${esc(S.account?.name || "Sin nombre")}</b></div>
+          <div class="muted">${S.account?.logo ? "Con logo" : "Sin logo"}</div>
+        </div>
+      </div>
+      ${admin ? item("brand", "image", "Nombre y logo") : ""}
     </div>
 
     <h3>Apariencia</h3>
@@ -1889,6 +2141,7 @@ function renderSettings() {
   $("settingsBody").querySelectorAll("[data-act]").forEach((b) => {
     b.addEventListener("click", () => ({
       pick: () => $("siteBtn").click(),
+      brand: brandScreen,
       sites: sitesScreen,
       users: usersScreen,
       pw: passwordScreen,
@@ -1903,6 +2156,135 @@ function renderSettings() {
         })) logout();
       },
     }[b.dataset.act]()));
+  });
+}
+
+/* --------------------------------- abonos --------------------------------
+   Plata entregada por adelantado. Resta de lo que hay que pagarle mientras siga
+   pendiente; al liquidar el periodo se marca como descontada.
+-------------------------------------------------------------------------- */
+function advanceForm(workerId = null) {
+  const gente = (lastReport?.rows || []).filter((x) => x.active || x.workerId === workerId);
+
+  openModal(`
+    <h2>Registrar abono</h2>
+    <p class="muted" style="margin:-6px 0 14px;">
+      Se descuenta de lo que le toca cobrar el día de pago.
+    </p>
+    <form id="aForm" class="card pad">
+      <label class="field"><span>Trabajador</span>
+        <select id="aWorker" required>
+          ${gente.length
+            ? gente.map((x) => `<option value="${x.workerId}" ${x.workerId === workerId ? "selected" : ""}>${esc(x.fullName)}</option>`).join("")
+            : '<option value="">Sin personal</option>'}
+        </select>
+      </label>
+      <label class="field"><span>Monto entregado (C$)</span>
+        <input id="aAmount" type="number" min="0" step="any" inputmode="decimal" required placeholder="0">
+      </label>
+      <label class="field"><span>Fecha</span>
+        <input id="aDay" type="date" value="${todayObra()}" required>
+      </label>
+      <label class="field"><span>Motivo (opcional)</span>
+        <input id="aNote" maxlength="120" placeholder="Adelanto, medicina, pasaje…">
+      </label>
+      <div id="aMsg"></div>
+      <button class="btn primary wide" type="submit">Registrar abono</button>
+    </form>
+  `);
+
+  $("aForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    try {
+      await api("/api/advances", { method: "POST", body: {
+        siteId: S.siteId,
+        workerId: Number($("aWorker").value),
+        amount: Number($("aAmount").value),
+        day: $("aDay").value,
+        note: $("aNote").value,
+      }});
+      closeModal();
+      toast("Abono registrado");
+      await loadReport();
+      if (workerId) workerDetail(workerId);
+    } catch (err) {
+      $("aMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`;
+    } finally { btn.disabled = false; }
+  });
+}
+
+/* ---------------------------- nombre y logo ------------------------------
+   El logo se achica en el navegador antes de subirlo: lo que llega al servidor
+   son unos pocos KB, no la foto de 4 MB que salio del telefono.
+-------------------------------------------------------------------------- */
+function brandScreen() {
+  let logo = S.account?.logo || null;      // null = sin logo; se aplica al guardar
+
+  const pintar = () => {
+    const box = $("bPreview");
+    box.innerHTML = logo
+      ? `<img class="brand-lg" src="${esc(logo)}" alt="">`
+      : `<div class="brand-lg brand-ph">${icon("building")}</div>`;
+    $("bRemove").classList.toggle("hidden", !logo);
+  };
+
+  openModal(`
+    <h2>Nombre y logo</h2>
+    <form id="bForm" class="card pad">
+      <div class="row" style="margin-bottom:16px;">
+        <div id="bPreview"></div>
+        <div class="grow">
+          <button type="button" class="btn sm wide" id="bPick">${icon("image")}Elegir imagen</button>
+          <button type="button" class="btn sm wide danger hidden" id="bRemove" style="margin-top:6px;">Quitar logo</button>
+        </div>
+      </div>
+      <input type="file" id="bFile" accept="image/*" class="hidden">
+
+      <label class="field"><span>Nombre de la empresa</span>
+        <input id="bName" value="${esc(S.account?.name || "")}" maxlength="80" required>
+      </label>
+      <p class="muted" style="margin:-6px 0 14px;">
+        El logo aparece arriba en la app y en los PDF que envíes.
+      </p>
+      <div id="bMsg"></div>
+      <button class="btn primary wide" type="submit">Guardar</button>
+    </form>
+  `);
+  pintar();
+
+  $("bPick").addEventListener("click", () => $("bFile").click());
+  $("bFile").addEventListener("change", async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    try {
+      logo = await fileToLogo(f);
+      pintar();
+    } catch (err) {
+      $("bMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`;
+    }
+    e.target.value = "";                   // permite volver a elegir el mismo archivo
+  });
+  $("bRemove").addEventListener("click", () => { logo = null; pintar(); });
+
+  $("bForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const r = await api("/api/auth?account=1", { method: "PUT", body: {
+        name: $("bName").value, logo,
+      }});
+      S.account = r.account;
+      localStorage.setItem("ao_account", JSON.stringify(S.account));
+      paintBrand();
+      closeModal();
+      toast("Guardado");
+      renderSettings();
+    } catch (err) {
+      $("bMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`;
+    } finally { btn.disabled = false; }
   });
 }
 

@@ -15,6 +15,7 @@ import workers from "../api/workers.js";
 import attendance from "../api/attendance.js";
 import report from "../api/report.js";
 import payments from "../api/payments.js";
+import advances from "../api/advances.js";
 import { db, ensureSchema } from "../lib/db.js";
 
 let fails = 0;
@@ -97,6 +98,36 @@ r = await call(auth, { token: A.token });
 check("A ve solo los usuarios de su empresa", r.body.users.length === 1 && r.body.users[0].name === "jefe", JSON.stringify(r.body.users?.map((u) => u.name)));
 check("A no puede editar al admin de B", (await call(auth, { method: "PUT", token: A.token, query: { id: B.userId }, body: { fullName: "Robado" } })).status === 404);
 check("A no puede desactivar al admin de B", (await call(auth, { method: "DELETE", token: A.token, query: { id: B.userId } })).status === 404);
+
+/* ========================================================================== */
+section("Nombre y logo de la empresa");
+
+// JPEG minimo valido (1x1). Alcanza para comprobar el guardado y el formato.
+const JPEG_1PX = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==";
+
+r = await call(auth, { method: "PUT", query: { account: "1" }, token: A.token,
+  body: { name: "Constructora Uno S.A.", logo: JPEG_1PX } });
+check("el admin cambia nombre y logo de su empresa",
+  r.status === 200 && r.body.account.name === "Constructora Uno S.A." && r.body.account.logo === JPEG_1PX,
+  JSON.stringify({ status: r.status, name: r.body.account?.name, tieneLogo: !!r.body.account?.logo }));
+
+r = await call(auth, { token: A.token });
+check("el logo vuelve al pedir la cuenta", r.body.account?.logo === JPEG_1PX);
+
+check("un PNG se rechaza (el PDF solo incrusta JPEG)",
+  (await call(auth, { method: "PUT", query: { account: "1" }, token: A.token,
+    body: { logo: "data:image/png;base64,iVBORw0KGgo=" } })).status === 400);
+check("un logo enorme se rechaza",
+  (await call(auth, { method: "PUT", query: { account: "1" }, token: A.token,
+    body: { logo: "data:image/jpeg;base64," + "A".repeat(500000) } })).status === 400);
+check("nombre vacio se rechaza",
+  (await call(auth, { method: "PUT", query: { account: "1" }, token: A.token, body: { name: "  " } })).status === 400);
+
+r = await call(auth, { method: "PUT", query: { account: "1" }, token: A.token, body: { logo: null } });
+check("se puede quitar el logo", r.status === 200 && r.body.account.logo === null, JSON.stringify(r.body.account));
+await call(auth, { method: "PUT", query: { account: "1" }, token: A.token, body: { logo: JPEG_1PX } });
+
+check("la empresa B no ve el logo de A", (await call(auth, { token: B.token })).body.account?.logo == null);
 
 /* ========================================================================== */
 section("Capataces: solo las obras asignadas");
@@ -266,6 +297,87 @@ check("otra empresa no puede pagar en mi obra",
   (await call(payments, { method: "POST", token: B.token, body: { siteId: obraA1, workerId: juan, from: day(-30), to: day(0) } })).status === 404);
 
 /* ========================================================================== */
+section("Abonos (adelantos)");
+
+// Trabajador limpio, en la otra obra, para que las cuentas sean faciles de leer.
+const abo = (await call(workers, { method: "POST", token: A.token,
+  body: { siteId: obraA2, fullName: "Carlos Abono", dailyRate: 500, rateFrom: day(-20) } })).body.worker.id;
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA2, day: day(-4), marks: [{ workerId: abo, status: "P" }] } });
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA2, day: day(-3), marks: [{ workerId: abo, status: "P" }] } });
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA2, day: day(-2), marks: [{ workerId: abo, status: "P" }] } });
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA2, day: day(-1), marks: [{ workerId: abo, status: "M" }] } });
+// 3 dias + medio = 3,5 x 500 = 1750
+
+const rango = { siteId: obraA2, from: day(-20), to: day(0) };
+r = await call(report, { token: A.token, query: rango });
+let c = r.body.rows.find((x) => x.workerId === abo);
+check("gana 1750 antes de cualquier abono", c.earned === 1750 && c.pending === 1750, JSON.stringify(c));
+
+r = await call(advances, { method: "POST", token: A.token,
+  body: { siteId: obraA2, workerId: abo, day: day(-3), amount: 500, note: "Adelanto" } });
+check("se registra un abono", r.status === 201, JSON.stringify(r.body));
+await call(advances, { method: "POST", token: A.token,
+  body: { siteId: obraA2, workerId: abo, day: day(-1), amount: 250 } });
+
+r = await call(report, { token: A.token, query: rango });
+c = r.body.rows.find((x) => x.workerId === abo);
+check("los abonos suman 750", c.advances === 750, JSON.stringify(c));
+check("y se descuentan: a recibir 1000", c.pending === 1000, JSON.stringify({ earned: c.earned, advances: c.advances, pending: c.pending }));
+check("lo ganado NO cambia", c.earned === 1750, JSON.stringify(c));
+
+check("el capataz no registra abonos",
+  (await call(advances, { method: "POST", token: F.token, body: { siteId: obraA2, workerId: abo, day: day(0), amount: 100 } })).status === 403);
+check("monto cero se rechaza",
+  (await call(advances, { method: "POST", token: A.token, body: { siteId: obraA2, workerId: abo, day: day(0), amount: 0 } })).status === 400);
+check("otra empresa no registra abonos en mi obra",
+  (await call(advances, { method: "POST", token: B.token, body: { siteId: obraA2, workerId: abo, day: day(0), amount: 100 } })).status === 404);
+check("otra empresa no ve mis abonos",
+  (await call(advances, { token: B.token, query: rango })).status === 404);
+
+// Un abono todavia sin descontar se puede borrar.
+r = await call(advances, { token: A.token, query: { ...rango, workerId: abo } });
+check("se listan los 2 abonos", r.body.advances.length === 2, JSON.stringify(r.body.advances));
+const abonoId = r.body.advances.find((a) => a.amount === 250).id;
+check("se puede quitar un abono pendiente",
+  (await call(advances, { method: "DELETE", token: A.token, query: { id: abonoId } })).status === 200);
+r = await call(report, { token: A.token, query: rango });
+c = r.body.rows.find((x) => x.workerId === abo);
+check("al quitarlo, vuelve a deber 1250", c.pending === 1250 && c.advances === 500, JSON.stringify(c));
+
+// Liquidacion: se pagan los dias y se descuentan los abonos en una sola pasada.
+r = await call(payments, { method: "POST", token: A.token, body: { siteId: obraA2, workerId: abo, from: day(-20), to: day(0) } });
+check("al pagar, los dias suman 1750", r.body.amount === 1750, JSON.stringify(r.body));
+check("se descuentan 500 de abonos", r.body.advances === 500, JSON.stringify(r.body));
+check("se entregan en mano 1250", r.body.net === 1250, JSON.stringify(r.body));
+
+r = await call(report, { token: A.token, query: rango });
+c = r.body.rows.find((x) => x.workerId === abo);
+check("despues de pagar queda en cero", c.pending === 0 && c.advances === 0, JSON.stringify(c));
+
+r = await call(advances, { token: A.token, query: { ...rango, workerId: abo } });
+check("el abono queda marcado como descontado", r.body.advances[0].settled === true, JSON.stringify(r.body.advances));
+check("un abono ya descontado NO se puede borrar",
+  (await call(advances, { method: "DELETE", token: A.token, query: { id: r.body.advances[0].id } })).status === 400);
+
+// Deshacer el pago tiene que devolver TAMBIEN el abono a pendiente.
+r = await call(payments, { method: "DELETE", token: A.token, query: { siteId: obraA2, workerId: abo, from: day(-20), to: day(0) } });
+check("deshacer el pago devuelve el abono a pendiente", r.body.advances === 1, JSON.stringify(r.body));
+r = await call(report, { token: A.token, query: rango });
+c = r.body.rows.find((x) => x.workerId === abo);
+check("y las cuentas vuelven a como estaban", c.earned === 1750 && c.advances === 500 && c.pending === 1250, JSON.stringify(c));
+
+// Adelantarle mas de lo que trabajo deja saldo a favor de la empresa.
+await call(advances, { method: "POST", token: A.token,
+  body: { siteId: obraA2, workerId: abo, day: day(0), amount: 2000 } });
+r = await call(report, { token: A.token, query: rango });
+c = r.body.rows.find((x) => x.workerId === abo);
+check("si se le adelanta de mas, el saldo queda negativo", c.pending === -750, JSON.stringify({ earned: c.earned, advances: c.advances, pending: c.pending }));
+
+// Se limpia para no ensuciar las comprobaciones que vienen despues.
+await call(payments, { method: "POST", token: A.token, body: { siteId: obraA2, workerId: abo, from: day(-20), to: day(0) } });
+await call(workers, { method: "DELETE", token: A.token, query: { id: abo } });
+
+/* ========================================================================== */
 section("Bajas y traslados");
 
 await call(workers, { method: "DELETE", token: A.token, query: { id: ana } });
@@ -290,7 +402,7 @@ check("la empresa no puede quedarse sin admin", r.status === 400, JSON.stringify
 
 /* ========================================================================== */
 if (!process.argv.includes("--keep")) {
-  for (const t of ["attendance", "worker_rates", "workers", "site_users", "sites", "users", "accounts"]) {
+  for (const t of ["advances", "attendance", "worker_rates", "workers", "site_users", "sites", "users", "accounts"]) {
     await db.execute(`DELETE FROM ${t}`);
   }
   console.log("\nDatos de prueba borrados (usa --keep para conservarlos).");

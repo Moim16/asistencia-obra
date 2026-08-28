@@ -8,6 +8,9 @@
 //  POST   /api/auth?new=1            { name, password, fullName, role, siteIds }
 //                                    -> el admin crea un usuario DE SU CUENTA.
 //  GET    /api/auth                  -> { me, account, users? } (users solo si admin).
+//  PUT    /api/auth?account=1        { name, logo } -> el admin cambia el nombre y
+//                                    el logo de SU empresa. `logo` es un data URI
+//                                    JPEG (null lo borra).
 //  PUT    /api/auth?id=              { fullName, role, active, password, siteIds }
 //                                    -> admin edita un usuario de su cuenta.
 //                                    Sin ser admin solo puedes cambiar TU contraseña
@@ -32,6 +35,19 @@ const MAX_FAILS = 5;
 const LOCK_MS = 15 * 60 * 1000;
 const NAME_RE = /^[\p{L}\p{N}._-]{2,20}$/u;
 const SIGNUP_OPEN = process.env.ALLOW_SIGNUP !== "0";   // cerrar con ALLOW_SIGNUP=0
+const MAX_LOGO = 400 * 1024;   // el navegador ya lo achica; esto es el tope duro
+
+// Solo se acepta un data URI de JPEG: es lo que la app genera y lo unico que se
+// puede incrustar directo en un PDF.
+function parseLogo(v) {
+  if (v === null || v === "") return { ok: true, value: null };
+  const s = String(v ?? "");
+  if (!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(s)) {
+    return { ok: false, error: "El logo debe ser una imagen JPEG." };
+  }
+  if (s.length > MAX_LOGO) return { ok: false, error: "El logo es muy pesado. Usa una imagen más chica." };
+  return { ok: true, value: s };
+}
 
 const publicUser = (u) => ({
   id: Number(u.id), name: u.name, fullName: u.fullName,
@@ -65,8 +81,8 @@ export default async function handler(req, res) {
     if (req.method === "GET") {
       const me = await currentUser(req, body);
       if (!me) return deny(res);
-      const acc = await db.execute({ sql: `SELECT name FROM accounts WHERE id = ?`, args: [me.accountId] });
-      const account = { id: me.accountId, name: acc.rows[0]?.name || null };
+      const acc = await db.execute({ sql: `SELECT name, logo FROM accounts WHERE id = ?`, args: [me.accountId] });
+      const account = { id: me.accountId, name: acc.rows[0]?.name || null, logo: acc.rows[0]?.logo || null };
       if (!isAdmin(me)) return res.status(200).json({ me, account });
 
       // Solo los usuarios de MI cuenta, cada uno con las obras que tiene asignadas.
@@ -195,11 +211,41 @@ export default async function handler(req, res) {
         sql: `UPDATE users SET sessionToken = ?, failedLogins = 0, lockedUntil = NULL WHERE id = ?`,
         args: [token, u.id],
       });
-      const acc = await db.execute({ sql: `SELECT id, name FROM accounts WHERE id = ?`, args: [u.accountId] });
+      const acc = await db.execute({ sql: `SELECT id, name, logo FROM accounts WHERE id = ?`, args: [u.accountId] });
       return res.status(200).json({
         user: publicUser(u),
-        account: acc.rows[0] ? { id: Number(acc.rows[0].id), name: acc.rows[0].name } : null,
+        account: acc.rows[0]
+          ? { id: Number(acc.rows[0].id), name: acc.rows[0].name, logo: acc.rows[0].logo || null }
+          : null,
         token,
+      });
+    }
+
+    /* --------------------------------------------- PUT datos de la empresa */
+    if (req.method === "PUT" && req.query?.account) {
+      const me = await currentUser(req, body);
+      if (!me) return deny(res);
+      if (!isAdmin(me)) return deny(res, true);
+
+      const sets = [], args = [];
+      if ("name" in body) {
+        const name = clean(body.name, 80);
+        if (!name) return res.status(400).json({ error: "El nombre de la empresa es obligatorio." });
+        sets.push("name = ?"); args.push(name);
+      }
+      if ("logo" in body) {
+        const logo = parseLogo(body.logo);
+        if (!logo.ok) return res.status(400).json({ error: logo.error });
+        sets.push("logo = ?"); args.push(logo.value);
+      }
+      if (!sets.length) return res.status(400).json({ error: "Nada que actualizar." });
+      args.push(me.accountId);
+      await db.execute({ sql: `UPDATE accounts SET ${sets.join(", ")} WHERE id = ?`, args });
+
+      const acc = await db.execute({ sql: `SELECT id, name, logo FROM accounts WHERE id = ?`, args: [me.accountId] });
+      return res.status(200).json({
+        ok: true,
+        account: { id: Number(acc.rows[0].id), name: acc.rows[0].name, logo: acc.rows[0].logo || null },
       });
     }
 

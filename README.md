@@ -37,7 +37,21 @@ Cada trabajador tiene su **pago por día completo**, y **medio día paga la mita
 
 > **El primer monto cubre hacia atrás.** Si un día es anterior a la primera tarifa registrada, se paga igual con esa primera tarifa. Lo normal es marcar días y recién después cargar cuánto gana la persona; sin esta regla esos días quedarían en cero. Los cambios **programados hacia adelante** sí valen solo desde su fecha.
 
-En *Reporte → Pagos* se ve, por trabajador, lo **ganado**, lo **pagado** y lo **pendiente**, y desde ahí se marca un período como pagado.
+### Abonos y día de pago
+
+El **día de pago es el sábado**. Cuando un trabajador pide plata por adelantado, se registra el **abono** desde *Reporte → Pagos → + Abono* (fecha, monto y motivo).
+
+Un abono resta de lo que le toca cobrar mientras siga pendiente:
+
+```
+A recibir = ganado − ya pagado − abonos sin descontar
+```
+
+Al liquidar el período, los días quedan pagados **y** los abonos se marcan como descontados en la misma operación, así que deshacer el pago devuelve las dos cosas al estado anterior. Si se le adelantó más de lo que trabajó, el saldo queda **negativo**: es plata a favor de la empresa que se arrastra al período siguiente.
+
+Un abono ya descontado no se puede borrar sin deshacer primero el pago que lo consumió — si no, las cuentas del período quedarían mintiendo.
+
+En *Reporte → Pagos* se ve, por trabajador, lo **ganado**, los **abonos** y lo que hay **a recibir**, y desde ahí se marca un período como pagado.
 
 > **Al pagar, el monto se congela.** Queda registrado lo que de verdad se le pagó ese día. Si después le subes el pago por día, lo ya pagado no se reescribe.
 
@@ -45,9 +59,21 @@ En *Reporte → Pagos* se ve, por trabajador, lo **ganado**, lo **pagado** y lo 
 
 - **Reporte de la obra** en PDF: todos los trabajadores con días, ganado, pagado y pendiente.
 - **Detalle por trabajador** en PDF: resumen con lo que le toca recibir y el día a día con montos.
-- **Enviar por WhatsApp**: en el celular abre el menú de compartir con el PDF adjunto; donde no se puede adjuntar (computador), manda un resumen en texto con los días trabajados y el total a recibir.
+- **Enviar por WhatsApp**, en dos acciones separadas a propósito:
+  - **Resumen** → abre WhatsApp con el mensaje ya escrito (días, ganado, abonos y total a recibir).
+  - **PDF** → abre el menú de compartir con el archivo adjunto.
 
-El PDF se genera **sin ninguna librería externa** (ver `MiniPdf` en `index.html`): no hay que tocar el CSP, no hay cientos de KB que bajar y funciona sin señal. Usa las fuentes Helvetica que ya trae todo lector de PDF, con codificación WinAnsi (soporta tildes y eñes).
+  Van separadas porque **WhatsApp descarta el texto cuando recibe un archivo**: mandar los dos juntos siempre perdía uno. En computador, donde no se puede adjuntar desde el navegador, el botón de PDF lo descarga y avisa.
+
+Los dos llevan el **logo de la empresa** arriba a la derecha.
+
+El PDF se genera **sin ninguna librería externa** (ver `MiniPdf` en `index.html`): no hay que tocar el CSP, no hay cientos de KB que bajar y funciona sin señal. Usa las fuentes Helvetica que ya trae todo lector de PDF, con codificación WinAnsi (soporta tildes y eñes), y el logo se incrusta como XObject con filtro `DCTDecode`.
+
+### Logo de la empresa
+
+Se carga desde *Ajustes → Empresa → Nombre y logo*, y aparece en la cabecera de la app y en los PDF. El navegador lo achica a 320px y lo convierte a **JPEG** antes de subirlo, así que lo que llega al servidor son unos pocos KB y no la foto de 4 MB del teléfono.
+
+Es JPEG a propósito: es el único formato que se puede incrustar tal cual en un PDF, sin recomprimir nada. Se guarda como data URI en la tabla `accounts`, así que viaja con la sesión y funciona sin conexión.
 
 ### La fecha de la obra
 
@@ -76,7 +102,7 @@ Igual que `marcador-vivo`, sin build ni framework:
 - **Auth**: propia — scrypt (`salt:hash`) + `sessionToken` en el header `x-session-token`. Lockout de 5 intentos / 15 min
 - **Esquema**: se auto-crea con `ensureSchema()` (`CREATE TABLE IF NOT EXISTS` + `ALTER` idempotentes). No hay migraciones
 
-### Funciones serverless (6 de las 12 del plan Hobby)
+### Funciones serverless (7 de las 12 del plan Hobby)
 
 | Endpoint | Qué hace |
 |---|---|
@@ -85,12 +111,13 @@ Igual que `marcador-vivo`, sin build ni framework:
 | `api/workers.js` | Personal y pago por día (con historial) |
 | `api/attendance.js` | Pasar lista de un día (leer y guardar) |
 | `api/report.js` | Días trabajados y montos por período |
-| `api/payments.js` | Marcar días como pagados (y deshacer) |
+| `api/payments.js` | Marcar días como pagados (y deshacer), descontando abonos |
+| `api/advances.js` | Abonos: registrar, listar y quitar |
 
 ### Tablas
 
 ```
-accounts      empresas (el cerco duro: nadie ve fuera de la suya)
+accounts      empresas (el cerco duro: nadie ve fuera de la suya) + logo
 users         quienes entran a la app (admin / capataz)
 site_users    qué obras ve cada capataz
 sites         obras
@@ -98,6 +125,8 @@ workers       albañiles (pertenecen a una obra)
 worker_rates  pago por día del trabajador, vigente DESDE una fecha
 attendance    una fila por trabajador y día  ->  UNIQUE (workerId, day)
               paidAt / paidAmount = pago, con el monto congelado
+advances      abonos entregados por adelantado
+              settledAt = cuándo se descontó (NULL = todavía pendiente)
 ```
 
 Dos decisiones que importan para la liquidación:
@@ -126,7 +155,7 @@ node scripts/smoke.mjs           # corre y borra los datos de prueba
 node scripts/smoke.mjs --keep    # deja datos para mirar la app (jefe / obra1234)
 ```
 
-74 pruebas contra los handlers reales, sin levantar servidor. Requiere base **vacía**. Cubren, entre otras cosas, que una empresa no pueda tocar los datos de otra, que un capataz solo vea sus obras, que cada día se pague al monto que regía ese día, que subir el pago no reescriba lo ya pagado, y que los dias marcados antes de cargar el pago igual se paguen.
+102 pruebas contra los handlers reales, sin levantar servidor. Requiere base **vacía**. Cubren, entre otras cosas, que una empresa no pueda tocar los datos de otra, que un capataz solo vea sus obras, que cada día se pague al monto que regía ese día, que subir el pago no reescriba lo ya pagado, que los días marcados antes de cargar el pago igual se paguen, y que los abonos se descuenten y se devuelvan bien al deshacer un pago.
 
 ---
 
@@ -168,6 +197,5 @@ node scripts/smoke.mjs --keep    # deja datos para mirar la app (jefe / obra1234
 
 1. **Horas extras.** El modelo es por jornada (1 / 0,5 / 0). Si se necesitan horas reales, agregar columnas de entrada/salida a `attendance`.
 2. **Feriados.** Marcar un día como no laborable para toda la obra de una vez, en lugar de trabajador por trabajador.
-3. **Adelantos y descuentos.** Restar del pendiente lo que se entregó a cuenta.
 4. **Recuperar contraseña.** Hoy solo el admin puede resetear la de un capataz; si el admin pierde la suya, hay que tocar la base a mano.
 5. **Firma del trabajador.** Dejar constancia en el PDF de que recibió el pago.

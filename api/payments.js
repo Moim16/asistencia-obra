@@ -12,6 +12,11 @@
 //  al trabajador, lo ya pagado no se reescribe: queda registrado lo que de
 //  verdad se le pago ese dia. Los dias sin marcar y las faltas no se pagan.
 //
+//  ABONOS: al liquidar tambien se marcan como descontados los abonos que el
+//  trabajador tenia pendientes, con la MISMA marca de tiempo que los dias. Asi,
+//  deshacer el pago devuelve esos abonos a pendientes y las cuentas no quedan
+//  mintiendo. La plata que se entrega en mano es dias - abonos.
+//
 //  Solo el administrador paga; el capataz pasa lista y consulta.
 // =============================================================================
 
@@ -56,38 +61,83 @@ export default async function handler(req, res) {
 
     /* ------------------------------------------------------------ PAGAR ---- */
     if (req.method === "POST") {
+      const ahora = nowIso();
+
       // Solo dias trabajados y todavia impagos. Las faltas no entran.
       const upd = await db.execute({
         sql: `UPDATE attendance
                  SET paidAt = ?, paidBy = ?, paidAmount = ${AMOUNT_SQL}
                WHERE siteId = ? AND workerId = ? AND day >= ? AND day <= ?
                  AND paidAt IS NULL AND status IN ('P','M')`,
-        args: [nowIso(), me.id, siteId, workerId, from, to],
+        args: [ahora, me.id, siteId, workerId, from, to],
       });
-      if (!upd.rowsAffected) {
-        return res.status(200).json({ ok: true, days: 0, amount: 0, nada: true });
+
+      // Abonos pendientes hasta el fin del periodo. Se incluyen los anteriores a
+      // `from` a proposito: un adelanto de la semana pasada que quedo sin
+      // descontar tiene que salir en esta liquidacion.
+      const abonos = await db.execute({
+        sql: `SELECT COALESCE(SUM(amount), 0) t FROM advances
+               WHERE siteId = ? AND workerId = ? AND day <= ? AND settledAt IS NULL`,
+        args: [siteId, workerId, to],
+      });
+      const abonado = Number(abonos.rows[0].t);
+
+      if (!upd.rowsAffected && !abonado) {
+        return res.status(200).json({ ok: true, days: 0, amount: 0, advances: 0, net: 0, nada: true });
       }
+      if (abonado) {
+        // Misma marca de tiempo que los dias: es lo que permite deshacer ambas
+        // cosas juntas mas abajo.
+        await db.execute({
+          sql: `UPDATE advances SET settledAt = ?, settledBy = ?
+                 WHERE siteId = ? AND workerId = ? AND day <= ? AND settledAt IS NULL`,
+          args: [ahora, me.id, siteId, workerId, to],
+        });
+      }
+
       const sum = await db.execute({
         sql: `SELECT COUNT(*) c, COALESCE(SUM(paidAmount), 0) t FROM attendance
                WHERE siteId = ? AND workerId = ? AND day >= ? AND day <= ? AND paidAt IS NOT NULL`,
         args: [siteId, workerId, from, to],
       });
+      const dias = Number(sum.rows[0].t);
       return res.status(200).json({
         ok: true,
         days: upd.rowsAffected,
-        amount: Number(sum.rows[0].t),
+        amount: dias,                                     // suman los dias liquidados
+        advances: abonado,                                // lo ya adelantado
+        net: Math.round((dias - abonado) * 100) / 100,    // lo que se entrega en mano
         totalDaysPaid: Number(sum.rows[0].c),
       });
     }
 
     /* ---------------------------------------------------------- DESHACER --- */
     if (req.method === "DELETE") {
+      // Primero se anotan las marcas de tiempo de los pagos que se van a
+      // deshacer: son la unica forma de saber que abonos se descontaron en ESOS
+      // pagos y no en alguno anterior.
+      const marcas = await db.execute({
+        sql: `SELECT DISTINCT paidAt FROM attendance
+               WHERE siteId = ? AND workerId = ? AND day >= ? AND day <= ? AND paidAt IS NOT NULL`,
+        args: [siteId, workerId, from, to],
+      });
       const upd = await db.execute({
         sql: `UPDATE attendance SET paidAt = NULL, paidBy = NULL, paidAmount = NULL
                WHERE siteId = ? AND workerId = ? AND day >= ? AND day <= ? AND paidAt IS NOT NULL`,
         args: [siteId, workerId, from, to],
       });
-      return res.status(200).json({ ok: true, days: upd.rowsAffected });
+
+      let abonos = 0;
+      const ts = marcas.rows.map((r) => r.paidAt).filter(Boolean);
+      if (ts.length) {
+        const back = await db.execute({
+          sql: `UPDATE advances SET settledAt = NULL, settledBy = NULL
+                 WHERE workerId = ? AND settledAt IN (${ts.map(() => "?").join(",")})`,
+          args: [workerId, ...ts],
+        });
+        abonos = back.rowsAffected;
+      }
+      return res.status(200).json({ ok: true, days: upd.rowsAffected, advances: abonos });
     }
 
     res.setHeader("Allow", "POST, DELETE");

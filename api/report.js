@@ -4,17 +4,21 @@
 //  GET /api/report?siteId=&from=YYYY-MM-DD&to=YYYY-MM-DD
 //   -> { from, to, days:[...],
 //        rows:[{ workerId, fullName, trade, active, P, M, A, worked,
-//                earned, paid, pending, marks:{ day: { s, paid, amount } } }],
-//        totals:{ P, M, A, worked, earned, paid, pending } }
+//                earned, paid, advances, pending, marks:{ day:{ s, paid, amount } } }],
+//        totals:{ P, M, A, worked, earned, paid, advances, pending } }
 //
 //  "worked" = dias trabajados = P * 1 + M * 0.5 (los ausentes no suman).
 //
 //  Plata: cada dia vale el jornal vigente ESE DIA por el valor del dia (completo
 //  o medio). Si el dia ya se pago, vale el monto CONGELADO al pagarlo, no el
 //  jornal de hoy: subirle el sueldo a alguien no reescribe lo que ya cobro.
-//    earned  = todo lo trabajado en el rango
-//    paid    = lo que ya se le pago
-//    pending = lo que falta pagarle  (earned - paid)
+//    earned   = todo lo trabajado en el rango
+//    paid     = lo que ya se le liquido
+//    advances = abonos entregados por adelantado y TODAVIA sin descontar
+//    pending  = lo que hay que entregarle  (earned - paid - advances)
+//
+//  `pending` puede quedar NEGATIVO: si se le adelanto mas de lo que trabajo, ese
+//  saldo queda a favor de la empresa y se arrastra al periodo siguiente.
 //
 //  Incluye a quien ya NO esta activo pero SI tuvo marcas en el rango (una baja a
 //  mitad de mes tiene que seguir apareciendo en la liquidacion del mes).
@@ -67,6 +71,18 @@ export default async function handler(req, res) {
       args: [siteId],
     });
 
+    // Abonos TODAVIA sin descontar. No se acotan al inicio del rango: un adelanto
+    // de la semana pasada que quedo pendiente sigue restando de lo que hay que
+    // pagarle hoy.
+    const advRs = await db.execute({
+      sql: `SELECT a.workerId, COALESCE(SUM(a.amount), 0) t, w.fullName, w.trade, w.active
+              FROM advances a
+              JOIN workers w ON w.id = a.workerId
+             WHERE a.siteId = ? AND a.day <= ? AND a.settledAt IS NULL
+             GROUP BY a.workerId, w.fullName, w.trade, w.active`,
+      args: [siteId, to],
+    });
+
     const byWorker = new Map();
     const ensureRow = (id, fullName, trade, active) => {
       let r = byWorker.get(id);
@@ -74,7 +90,7 @@ export default async function handler(req, res) {
         r = {
           workerId: id, fullName, trade: trade || null, active: Number(active),
           P: 0, M: 0, A: 0, worked: 0,
-          earned: 0, paid: 0, pending: 0,
+          earned: 0, paid: 0, advances: 0, pending: 0,
           rate: null,              // jornal vigente al final del rango (informativo)
           marks: {},
         };
@@ -103,11 +119,19 @@ export default async function handler(req, res) {
       if (m.rate != null) r.rate = Number(m.rate);
     }
 
+    for (const a of advRs.rows) {
+      const r = ensureRow(Number(a.workerId), a.fullName, a.trade, a.active);
+      r.advances = Number(a.t);
+    }
+
     for (const r of byWorker.values()) {
       r.worked = round2(r.worked);
       r.earned = round2(r.earned);
       r.paid = round2(r.paid);
-      r.pending = round2(r.earned - r.paid);
+      r.advances = round2(r.advances);
+      // Lo que hay que entregarle: lo trabajado, menos lo ya liquidado, menos lo
+      // que se le adelanto y sigue sin descontar.
+      r.pending = round2(r.earned - r.paid - r.advances);
     }
 
     const rows = [...byWorker.values()].sort((a, b) =>
@@ -118,8 +142,9 @@ export default async function handler(req, res) {
       worked: round2(t.worked + r.worked),
       earned: round2(t.earned + r.earned),
       paid: round2(t.paid + r.paid),
+      advances: round2(t.advances + r.advances),
       pending: round2(t.pending + r.pending),
-    }), { P: 0, M: 0, A: 0, worked: 0, earned: 0, paid: 0, pending: 0 });
+    }), { P: 0, M: 0, A: 0, worked: 0, earned: 0, paid: 0, advances: 0, pending: 0 });
 
     return res.status(200).json({ siteId, from, to, days, rows, totals });
   } catch (err) {
