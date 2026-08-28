@@ -1608,7 +1608,8 @@ let lastReport = null;
 
 async function loadReport() {
   if (!$("repFrom").value || !$("repTo").value) {
-    const [f, t] = monthRange(0);
+    // Por defecto, la semana que se paga este sabado: es lo que se mira a diario.
+    const [f, t] = RANGES[0][1]();
     $("repFrom").value = f; $("repTo").value = t;
   }
   if (!S.siteId) { $("reportBox").innerHTML = `<div class="empty">No hay obras todavía.</div>`; return; }
