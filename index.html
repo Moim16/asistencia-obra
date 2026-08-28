@@ -110,6 +110,12 @@ button {
 :focus-visible { outline:2px solid var(--ink); outline-offset:2px; border-radius:4px; }
 a { color:var(--ink); }
 .hidden { display:none !important; }
+/* Oculto a la vista pero PRESENTE: un <input type=file> con display:none no
+   abre el selector en iOS ni en varios navegadores de Android. */
+.vhidden {
+  position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+  overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0;
+}
 svg.i { width:1em; height:1em; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; flex:none; }
 
 /* ------------------------------------------------------------------ layout */
@@ -578,7 +584,7 @@ async function fileToLogo(file) {
     const img = new Image();
     await new Promise((ok, fail) => {
       img.onload = ok;
-      img.onerror = () => fail(new Error("No se pudo leer la imagen."));
+      img.onerror = () => fail(new Error("No se pudo leer esa imagen. Prueba con una foto JPG o PNG."));
       img.src = url;
     });
     const escala = Math.min(1, LOGO_MAX / Math.max(img.width, img.height));
@@ -2237,11 +2243,13 @@ function brandScreen() {
       <div class="row" style="margin-bottom:16px;">
         <div id="bPreview"></div>
         <div class="grow">
-          <button type="button" class="btn sm wide" id="bPick">${icon("image")}Elegir imagen</button>
+          <label class="btn sm wide" for="bFile" style="cursor:pointer;">
+            ${icon("image")}Elegir imagen
+            <input type="file" id="bFile" accept="image/*" class="vhidden">
+          </label>
           <button type="button" class="btn sm wide danger hidden" id="bRemove" style="margin-top:6px;">Quitar logo</button>
         </div>
       </div>
-      <input type="file" id="bFile" accept="image/*" class="hidden">
 
       <label class="field"><span>Nombre de la empresa</span>
         <input id="bName" value="${esc(S.account?.name || "")}" maxlength="80" required>
@@ -2255,13 +2263,14 @@ function brandScreen() {
   `);
   pintar();
 
-  $("bPick").addEventListener("click", () => $("bFile").click());
   $("bFile").addEventListener("change", async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    $("bMsg").innerHTML = `<div class="msg">Procesando la imagen…</div>`;
     try {
       logo = await fileToLogo(f);
       pintar();
+      $("bMsg").innerHTML = "";
     } catch (err) {
       $("bMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`;
     }
