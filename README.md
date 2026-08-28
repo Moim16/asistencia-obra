@@ -96,9 +96,16 @@ Llama a los handlers con `req`/`res` falsos, sin levantar servidor. Requiere bas
 
 ---
 
-## Pendientes / posibles mejoras
+## Convenciones
 
-0. **Ningun dialogo del navegador.** Los `confirm()`/`alert()` nativos se reemplazaron por `ask()` y `toast()` propios: ademas de verse mejor en el celular, los nativos **congelan la pagina entera** mientras estan abiertos. Si se agregan confirmaciones nuevas, usar `await ask({...})`, nunca `confirm()`.
+**Nada de diálogos del navegador.** `confirm()` y `alert()` nativos se ven mal en el celular y, sobre todo, **congelan la página entera** mientras están abiertos. La app usa:
+
+- `await ask({ title, text, ok, cancel, danger })` → promesa que resuelve `true`/`false`, para confirmar
+- `toast(texto, "ok" | "err")` → aviso breve que no interrumpe
+
+---
+
+## Pendientes / posibles mejoras
 
 1. **Marcar sin conexión.** Hoy el service worker cachea solo el "cascarón": la app **abre** sin señal, pero no se puede cargar ni guardar la lista. En obra la conectividad suele ser mala → guardar las marcas en `localStorage` y sincronizarlas al recuperar red es la mejora de mayor impacto.
 2. **Jornal y liquidación.** La columna `workers.dailyRate` ya existe sin uso. Falta la UI y multiplicar por `worked` en el reporte.
