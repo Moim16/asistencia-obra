@@ -1723,7 +1723,7 @@ function workerForm(w) {
         <label class="field"><span>Pago por día completo (C$)</span>
           <input id="wRate" type="number" min="0" step="any" inputmode="decimal" placeholder="0">
         </label>
-        <p class="muted" style="margin:-6px 0 14px;">Medio día paga la mitad. Después se puede cambiar desde una fecha.</p>
+        <p class="muted" style="margin:-6px 0 14px;">Medio día paga la mitad. Cubre también los días que ya le hayas marcado.</p>
       ` : ""}
       ${isNew ? "" : `
         <label class="field"><span>Obra</span>
@@ -1802,8 +1802,9 @@ async function ratesScreen(w) {
         <input id="rFrom" type="date" value="${hoy}" required>
       </label>
       <p class="muted" style="margin:-6px 0 14px;">
-        Pon una fecha futura para dejar programada una mejora. Los días anteriores
-        no cambian.
+        El primer monto que registres cubre también los días ya marcados antes de
+        esa fecha. Pon una fecha futura para dejar programada una mejora: ahí sí,
+        los días anteriores se siguen pagando al monto viejo.
       </p>
       <div id="rMsg"></div>
       <button class="btn primary wide" type="submit">Guardar</button>

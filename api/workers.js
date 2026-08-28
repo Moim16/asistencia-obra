@@ -72,9 +72,13 @@ export default async function handler(req, res) {
       const hoy = localDay(req.query?.today);
       const rs = await db.execute({
         sql: `SELECT w.id, w.siteId, w.fullName, w.docId, w.trade, w.phone, w.active,
-                     (SELECT r.amount FROM worker_rates r
-                       WHERE r.workerId = w.id AND r.fromDay <= ?
-                       ORDER BY r.fromDay DESC LIMIT 1) AS dailyRate,
+                     COALESCE(
+                       (SELECT r.amount FROM worker_rates r
+                         WHERE r.workerId = w.id AND r.fromDay <= ?
+                         ORDER BY r.fromDay DESC LIMIT 1),
+                       (SELECT r.amount FROM worker_rates r
+                         WHERE r.workerId = w.id
+                         ORDER BY r.fromDay ASC LIMIT 1)) AS dailyRate,
                      (SELECT MIN(r.fromDay) FROM worker_rates r
                        WHERE r.workerId = w.id AND r.fromDay > ?) AS nextRateFrom
                 FROM workers w

@@ -8,7 +8,7 @@
 //  DELETE /api/payments?siteId=&workerId=&from=&to=
 //         -> deshace el pago de ese rango (por si se marco por error).
 //
-//  El monto se CONGELA al pagar (`paidAmount`). Si despues se le sube el jornal
+//  El monto se CONGELA al pagar (`paidAmount`). Si despues se le sube el pago
 //  al trabajador, lo ya pagado no se reescribe: queda registrado lo que de
 //  verdad se le pago ese dia. Los dias sin marcar y las faltas no se pagan.
 //
@@ -19,12 +19,19 @@ import { db, ensureSchema, nowIso } from "../lib/db.js";
 import { readJson, parseDay, parseId } from "../lib/http.js";
 import { currentUser, isAdmin, deny, notYours, canSeeSite } from "../lib/auth.js";
 
-// Jornal vigente el dia de la fila, por el valor del dia (1 completo, 0,5 medio).
-// Va dentro del UPDATE, asi que referencia la tabla por nombre y no por alias.
+// Pago vigente el dia de la fila, por el valor del dia (1 completo, 0,5 medio).
+// Misma regla que RATE_SQL: si el dia es anterior a la primera tarifa registrada,
+// rige esa primera tarifa. Va dentro de un UPDATE, asi que referencia la tabla
+// por nombre y no por alias.
 const AMOUNT_SQL = `
-  COALESCE((SELECT r.amount FROM worker_rates r
-             WHERE r.workerId = attendance.workerId AND r.fromDay <= attendance.day
-             ORDER BY r.fromDay DESC LIMIT 1), 0)
+  COALESCE(
+    (SELECT r.amount FROM worker_rates r
+      WHERE r.workerId = attendance.workerId AND r.fromDay <= attendance.day
+      ORDER BY r.fromDay DESC LIMIT 1),
+    (SELECT r.amount FROM worker_rates r
+      WHERE r.workerId = attendance.workerId
+      ORDER BY r.fromDay ASC LIMIT 1),
+    0)
   * CASE attendance.status WHEN 'P' THEN 1.0 WHEN 'M' THEN 0.5 ELSE 0 END`;
 
 export default async function handler(req, res) {

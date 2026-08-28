@@ -160,6 +160,25 @@ const anaRow = r.body.workers.find((w) => w.id === ana);
 check("una subida programada NO cambia el jornal de hoy", anaRow.dailyRate === 15000, JSON.stringify(anaRow));
 check("y queda avisada como proximo cambio", anaRow.nextRateFrom === day(7), JSON.stringify(anaRow));
 
+// Caso real que se escapo: se marcan dias y DESPUES se registra cuanto gana la
+// persona. Esos dias no pueden quedar en cero solo por ser anteriores a la
+// fecha de la tarifa; rige la primera tarifa registrada.
+const nuevo = (await call(workers, { method: "POST", token: A.token,
+  body: { siteId: obraA2, fullName: "Pedro Tardio", trade: "Peón" } })).body.worker.id;
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA2, day: day(-6), marks: [{ workerId: nuevo, status: "P" }] } });
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA2, day: day(-5), marks: [{ workerId: nuevo, status: "P" }] } });
+await call(workers, { method: "POST", query: { rates: "1" }, token: A.token,
+  body: { workerId: nuevo, amount: 800, fromDay: day(0) } });    // se carga HOY
+r = await call(report, { token: A.token, query: { siteId: obraA2, from: day(-30), to: day(0) } });
+const tardio = r.body.rows.find((x) => x.workerId === nuevo);
+check("los dias marcados ANTES de cargar el pago igual se pagan",
+  tardio.earned === 1600, JSON.stringify({ earned: tardio.earned, esperado: 1600 }));
+
+r = await call(payments, { method: "POST", token: A.token, body: { siteId: obraA2, workerId: nuevo, from: day(-30), to: day(0) } });
+check("y al pagarlos suman completo", r.body.amount === 1600, JSON.stringify(r.body));
+await call(payments, { method: "DELETE", token: A.token, query: { siteId: obraA2, workerId: nuevo, from: day(-30), to: day(0) } });
+await call(workers, { method: "DELETE", token: A.token, query: { id: nuevo } });
+
 check("otra empresa no ve el historial de jornales", (await call(workers, { token: B.token, query: { id: juan, rates: "1" } })).status === 404);
 check("el capataz no fija jornales", (await call(workers, { method: "POST", query: { rates: "1" }, token: F.token, body: { workerId: juan, amount: 1, fromDay: day(0) } })).status === 403);
 

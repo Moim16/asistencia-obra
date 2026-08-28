@@ -35,6 +35,8 @@ Sin marcar ≠ falta: un día sin marcar simplemente no suma (útil para domingo
 
 Cada trabajador tiene su **pago por día completo**, y **medio día paga la mitad**. Se guarda con **historial por fecha de vigencia**: se le puede subir el pago a alguien a partir del próximo lunes sin tocar lo que ya trabajó, porque cada día se paga al monto que regía *ese día*.
 
+> **El primer monto cubre hacia atrás.** Si un día es anterior a la primera tarifa registrada, se paga igual con esa primera tarifa. Lo normal es marcar días y recién después cargar cuánto gana la persona; sin esta regla esos días quedarían en cero. Los cambios **programados hacia adelante** sí valen solo desde su fecha.
+
 En *Reporte → Pagos* se ve, por trabajador, lo **ganado**, lo **pagado** y lo **pendiente**, y desde ahí se marca un período como pagado.
 
 > **Al pagar, el monto se congela.** Queda registrado lo que de verdad se le pagó ese día. Si después le subes el pago por día, lo ya pagado no se reescribe.
