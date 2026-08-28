@@ -167,6 +167,13 @@ r = await call(report, { token: foremanTok, query: { siteId: siteA, from: ayer, 
 check("trasladado conserva su historial en la obra A",
   r.body.rows.some(x => x.fullName === "Pedro Ramírez" && x.worked === 1.5), JSON.stringify(r.body.rows.map(x=>[x.fullName,x.worked])));
 
+// La marca del dia que quedo en la obra ANTERIOR no debe verse en la obra nueva:
+// si se viera, la lista diaria mostraria un estado que el reporte de esa obra no cuenta.
+const rObraB = await call(attendance, { token: foremanTok, query: { siteId: siteB, day: hoy } });
+const pedroEnB = rObraB.body.workers.find(x => x.fullName === "Pedro Ramirez" || x.fullName === "Pedro Ramírez");
+check("trasladado: su marca de la obra anterior NO aparece en la obra nueva",
+  !!pedroEnB && pedroEnB.status === null, JSON.stringify(pedroEnB));
+
 // rango invertido / demasiado largo
 check("rango invertido -> 400", (await call(report, { token: foremanTok, query: { siteId: siteA, from: hoy, to: ayer } })).status === 400);
 check("rango > 186 dias -> 400", (await call(report, { token: foremanTok, query: { siteId: siteA, from: "2025-01-01", to: "2026-12-31" } })).status === 400);

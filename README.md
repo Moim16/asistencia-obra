@@ -64,8 +64,11 @@ attendance  una fila por trabajador y día  ->  UNIQUE (workerId, day)
 
 ```bash
 npm install
-npx vercel dev            # http://localhost:3000
+node scripts/dev.mjs                    # http://localhost:3000  (base local)
+node --env-file=.env scripts/dev.mjs    # http://localhost:3000  (contra Turso)
 ```
+
+`scripts/dev.mjs` sirve los archivos estaticos y enruta `/api/<x>` al handler de `api/<x>.js` igual que Vercel, sin pedir login interactivo (`npx vercel dev` tambien funciona).
 
 Sin `.env` usa el archivo `data/asistencia.db` (no se commitea). Cero cuenta, cero setup.
 
@@ -94,6 +97,8 @@ Llama a los handlers con `req`/`res` falsos, sin levantar servidor. Requiere bas
 ---
 
 ## Pendientes / posibles mejoras
+
+0. **Ningun dialogo del navegador.** Los `confirm()`/`alert()` nativos se reemplazaron por `ask()` y `toast()` propios: ademas de verse mejor en el celular, los nativos **congelan la pagina entera** mientras estan abiertos. Si se agregan confirmaciones nuevas, usar `await ask({...})`, nunca `confirm()`.
 
 1. **Marcar sin conexión.** Hoy el service worker cachea solo el "cascarón": la app **abre** sin señal, pero no se puede cargar ni guardar la lista. En obra la conectividad suele ser mala → guardar las marcas en `localStorage` y sincronizarlas al recuperar red es la mejora de mayor impacto.
 2. **Jornal y liquidación.** La columna `workers.dailyRate` ya existe sin uso. Falta la UI y multiplicar por `worked` en el reporte.

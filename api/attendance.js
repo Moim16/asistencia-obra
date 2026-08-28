@@ -33,16 +33,19 @@ export default async function handler(req, res) {
       if (!day) return res.status(400).json({ error: "Fecha inválida (usa YYYY-MM-DD)." });
 
       // Personal activo + su marca del dia (LEFT JOIN: los no marcados vienen en null).
+      // El JOIN filtra tambien por obra: si un trabajador fue trasladado y ese dia
+      // tiene una marca de SU OBRA ANTERIOR, aqui debe salir "sin marcar", igual que
+      // en el reporte de esta obra. Si no, la lista y el reporte se contradicen.
       const rs = await db.execute({
         sql: `SELECT w.id, w.fullName, w.trade,
                      a.status, a.reason, a.note, a.updatedAt,
                      u.name AS markedByName
                 FROM workers w
-                LEFT JOIN attendance a ON a.workerId = w.id AND a.day = ?
+                LEFT JOIN attendance a ON a.workerId = w.id AND a.day = ? AND a.siteId = ?
                 LEFT JOIN users u ON u.id = a.markedBy
                WHERE w.siteId = ? AND w.active = 1
                ORDER BY w.fullName COLLATE NOCASE`,
-        args: [day, siteId],
+        args: [day, siteId, siteId],
       });
 
       const workers = rs.rows.map((w) => ({

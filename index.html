@@ -24,10 +24,19 @@ html, body { margin:0; padding:0; }
 body {
   background:var(--bg); color:var(--ink); font:16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-text-size-adjust:100%; padding-bottom:calc(72px + env(safe-area-inset-bottom));
+  overflow-x:hidden;                 /* nada debe desbordar a lo ancho en el celular */
+  overscroll-behavior-y:contain;     /* sin "rebote" que arrastre la pagina de atras */
 }
 body.no-nav { padding-bottom:0; }
 button, input, select, textarea { font:inherit; color:inherit; }
-button { cursor:pointer; }
+button {
+  cursor:pointer;
+  touch-action:manipulation;              /* sin el retardo de 300ms ni zoom por doble toque */
+  -webkit-tap-highlight-color:transparent;
+}
+/* Los controles que se tocan mucho no deben seleccionarse al mantener pulsado. */
+.mark, .reason, .chip, nav.bottom button, .daybar .nav { -webkit-user-select:none; user-select:none; }
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 a { color:var(--accent-dark); }
 .hidden { display:none !important; }
 
@@ -95,7 +104,9 @@ h3 { font-size:15px; margin:16px 0 8px; color:var(--muted); text-transform:upper
   flex:1; text-align:center; background:#fff; border:1px solid var(--line); border-radius:11px;
   padding:7px 8px; min-height:44px; display:flex; flex-direction:column; justify-content:center;
 }
-.daybar .day b { font-size:15px; text-transform:capitalize; }
+/* Solo la inicial en mayuscula: "capitalize" pondria "Jueves, 27 De Agosto". */
+.cap::first-letter { text-transform:uppercase; }
+.daybar .day b { font-size:15px; }
 .daybar .day small { color:var(--muted); font-size:12px; }
 
 .chips { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:12px; }
@@ -134,6 +145,7 @@ h3 { font-size:15px; margin:16px 0 8px; color:var(--muted); text-transform:upper
 .tbl { width:100%; border-collapse:collapse; font-size:14px; }
 .tbl th, .tbl td { padding:9px 8px; border-bottom:1px solid var(--line); text-align:right; }
 .tbl th:first-child, .tbl td:first-child { text-align:left; }
+.tbl td:first-child { max-width:200px; }
 .tbl th { font-size:11.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:700; }
 .tbl tfoot td { font-weight:800; border-bottom:0; border-top:2px solid var(--line); }
 .tbl td.days { font-weight:800; font-size:15px; }
@@ -171,6 +183,54 @@ nav.bottom svg { width:22px; height:22px; fill:none; stroke:currentColor; stroke
 .badge { font-size:11px; font-weight:700; padding:2px 7px; border-radius:999px; background:#eef1f4; color:var(--muted); }
 .badge.admin { background:#e0e7ff; color:#3730a3; }
 .badge.off { background:var(--bad-bg); color:var(--bad); }
+
+/* ------------------------------------------------- dialogo de confirmacion --
+   Reemplaza a confirm()/alert() del navegador: los nativos se ven mal en el
+   celular y, sobre todo, CONGELAN la pagina mientras estan abiertos.
+   Va por encima del modal normal para poder preguntar desde dentro de una ficha. */
+.dlg { z-index:60; align-items:center; justify-content:center; padding:20px; }
+.dlg-box {
+  background:var(--card); width:100%; max-width:380px; border-radius:18px; padding:20px 18px 16px;
+  box-shadow:0 16px 40px rgba(15,23,42,.28); animation:pop .14s ease-out;
+}
+@keyframes pop { from { transform:scale(.94); opacity:0; } to { transform:scale(1); opacity:1; } }
+.dlg-box h3 { margin:0 0 6px; font-size:17px; color:var(--ink); text-transform:none; letter-spacing:0; }
+.dlg-box p { margin:0 0 16px; font-size:14.5px; color:var(--muted); }
+.dlg-actions { display:flex; gap:9px; }
+.dlg-actions .btn { flex:1; }
+.btn.solid-danger { background:var(--bad); border-color:var(--bad); color:#fff; }
+
+/* -------------------------------------------------------------------- toast */
+.toast {
+  position:fixed; left:50%; transform:translateX(-50%);
+  bottom:calc(78px + env(safe-area-inset-bottom)); z-index:70;
+  max-width:calc(100% - 28px); padding:11px 16px; border-radius:12px;
+  font-size:14.5px; font-weight:600; color:#fff; background:#1f2937;
+  box-shadow:0 8px 24px rgba(15,23,42,.3); animation:pop .14s ease-out;
+}
+.toast.err { background:var(--bad); }
+
+/* ------------------------------------------------------ pantallas angostas --
+   A partir de aqui manda el celular chico (360px y similares): se aprieta el
+   espaciado para que los tres botones de marcar sigan entrando en una fila. */
+@media (max-width:400px) {
+  .wrap { padding:0 9px; }
+  .wk { padding:10px 11px; }
+  .marks { gap:5px; }
+  .mark { font-size:13px; gap:3px; }
+  .reason { padding:6px 9px; font-size:12.5px; }
+  .chip { padding:5px 9px; font-size:12.5px; }
+  .daybar { gap:6px; }
+  .daybar .day b { font-size:14px; }
+  .tbl th, .tbl td { padding:9px 5px; }
+  .tbl td:first-child { max-width:42vw; }
+  h2 { font-size:18px; }
+}
+/* Pantallas muy chicas (<=330px): los botones pasan a solo el simbolo. */
+@media (max-width:330px) {
+  .mark .lbl { display:none; }
+  .mark { font-size:17px; }
+}
 </style>
 </head>
 <body class="no-nav">
@@ -215,7 +275,7 @@ nav.bottom svg { width:22px; height:22px; fill:none; stroke:currentColor; stroke
       <div class="daybar">
         <button class="nav" id="dayPrev" aria-label="Día anterior">&#9664;</button>
         <label class="day" style="position:relative;">
-          <b id="dayLabel">—</b><small id="dayNote"></small>
+          <b id="dayLabel" class="cap">—</b><small id="dayNote"></small>
           <input type="date" id="dayInput" style="position:absolute; inset:0; opacity:0; width:100%; height:100%; border:0;">
         </label>
         <button class="nav" id="dayNext" aria-label="Día siguiente">&#9654;</button>
@@ -287,6 +347,7 @@ nav.bottom svg { width:22px; height:22px; fill:none; stroke:currentColor; stroke
 </div>
 
 <div id="modalRoot"></div>
+<div id="dialogRoot"></div>
 
 <script>
 /* ===========================================================================
@@ -326,6 +387,7 @@ function isWeekend(day) {
   return w === 0 || w === 6;
 }
 const fmtDays = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
 
 /* --------------------------------- API ---------------------------------- */
 async function api(path, { method = "GET", body } = {}) {
@@ -344,16 +406,51 @@ async function api(path, { method = "GET", body } = {}) {
   return data;
 }
 
+/* --------------------------- avisos y preguntas -------------------------- */
+// Aviso breve que no interrumpe (reemplaza a alert()).
+let toastTimer = null;
 function toast(text, kind = "ok") {
+  document.querySelectorAll(".toast").forEach((t) => t.remove());
   const el = document.createElement("div");
-  el.className = `msg ${kind}`;
+  el.className = `toast ${kind === "err" ? "err" : ""}`;
+  el.setAttribute("role", "status");
   el.textContent = text;
-  Object.assign(el.style, {
-    position:"fixed", left:"50%", transform:"translateX(-50%)", bottom:"128px",
-    zIndex:60, maxWidth:"92%", boxShadow:"0 6px 20px rgba(0,0,0,.18)",
-  });
   document.body.appendChild(el);
-  setTimeout(() => el.remove(), 2600);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.remove(), kind === "err" ? 4000 : 2600);
+}
+
+// Pregunta de si/no. Reemplaza a confirm(): el nativo se ve mal en el celular y
+// congela la pagina entera mientras esta abierto. Devuelve una promesa -> se usa
+// con `if (!(await ask({...}))) return;`.
+function ask({ title, text = "", ok = "Aceptar", cancel = "Cancelar", danger = false }) {
+  return new Promise((resolve) => {
+    const root = $("dialogRoot");
+    root.innerHTML = `
+      <div class="modal dlg" role="dialog" aria-modal="true">
+        <div class="dlg-box">
+          <h3>${esc(title)}</h3>
+          ${text ? `<p>${esc(text)}</p>` : ""}
+          <div class="dlg-actions">
+            <button class="btn" data-r="0">${esc(cancel)}</button>
+            <button class="btn ${danger ? "solid-danger" : "primary"}" data-r="1">${esc(ok)}</button>
+          </div>
+        </div>
+      </div>`;
+    const done = (v) => { document.removeEventListener("keydown", onKey); root.innerHTML = ""; resolve(v); };
+    const onKey = (e) => {
+      if (e.key === "Escape") done(false);
+      else if (e.key === "Enter") done(true);
+    };
+    document.addEventListener("keydown", onKey);
+    root.querySelectorAll("[data-r]").forEach((b) =>
+      b.addEventListener("click", () => done(b.dataset.r === "1")));
+    // Tocar fuera del cuadro = cancelar.
+    root.querySelector(".modal").addEventListener("click", (e) => {
+      if (e.target.classList.contains("modal")) done(false);
+    });
+    root.querySelector('[data-r="1"]').focus();
+  });
 }
 
 /* ===========================================================================
@@ -415,8 +512,12 @@ document.querySelectorAll("nav.bottom button").forEach((b) => {
   b.addEventListener("click", () => setView(b.dataset.view));
 });
 
-function setView(v) {
-  if (S.dirty.size && v !== "list" && !confirm("Tienes marcas sin guardar. ¿Salir igual?")) return;
+async function setView(v) {
+  if (S.dirty.size && v !== "list" && !(await ask({
+    title: "Tienes marcas sin guardar",
+    text: `${S.dirty.size} ${S.dirty.size === 1 ? "trabajador quedó marcado" : "trabajadores quedaron marcados"} sin guardar. Si sales ahora se pierden.`,
+    ok: "Salir sin guardar", cancel: "Seguir aquí", danger: true,
+  }))) return;
   S.view = v;
   document.querySelectorAll("nav.bottom button").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
   for (const [name, el] of Object.entries({
@@ -435,13 +536,19 @@ function setView(v) {
    Vista: pasar lista
    =========================================================================== */
 const REASONS = ["Falta", "Permiso", "Licencia", "Lluvia", "Feriado", "Accidente"];
+const MARK_ICON = { P: "&#10003;", M: "&#189;", A: "&#10007;" };
+const MARK_LABEL = { P: "Presente", M: "Medio", A: "Falta" };
 
 $("dayPrev").addEventListener("click", () => goDay(shiftDay(S.day, -1)));
 $("dayNext").addEventListener("click", () => goDay(shiftDay(S.day, 1)));
 $("dayInput").addEventListener("change", (e) => { if (e.target.value) goDay(e.target.value); });
 
-function goDay(day) {
-  if (S.dirty.size && !confirm("Tienes marcas sin guardar. ¿Cambiar de día igual?")) return;
+async function goDay(day) {
+  if (S.dirty.size && !(await ask({
+    title: "Tienes marcas sin guardar",
+    text: "Si cambias de día se pierden las marcas que no guardaste.",
+    ok: "Cambiar igual", cancel: "Seguir aquí", danger: true,
+  }))) return;
   S.day = day; S.dirty.clear(); loadDay();
 }
 
@@ -477,12 +584,13 @@ function renderDay() {
   }
   const n = (st) => w.filter((x) => x.status === st).length;
   const pend = w.length - n("P") - n("M") - n("A");
+  const jornadas = n("P") + n("M") * 0.5;
   $("summary").innerHTML =
-    `<span class="chip ok">${n("P")} presentes</span>` +
-    `<span class="chip half">${n("M")} medio día</span>` +
-    `<span class="chip bad">${n("A")} faltas</span>` +
+    `<span class="chip ok">${plural(n("P"), "presente", "presentes")}</span>` +
+    `<span class="chip half">${plural(n("M"), "medio día", "medios días")}</span>` +
+    `<span class="chip bad">${plural(n("A"), "falta", "faltas")}</span>` +
     (pend ? `<span class="chip">${pend} sin marcar</span>` : "") +
-    `<span class="chip">${fmtDays(n("P") + n("M") * 0.5)} jornadas</span>`;
+    `<span class="chip">${fmtDays(jornadas)} ${jornadas === 1 ? "jornada" : "jornadas"}</span>`;
 
   $("workerList").innerHTML = w.map((x) => `
     <div class="wk" data-id="${x.id}">
@@ -494,8 +602,9 @@ function renderDay() {
       </div>
       <div class="marks">
         ${["P", "M", "A"].map((st) => `
-          <button class="mark ${st} ${x.status === st ? "on" : ""}" data-mark="${st}">
-            ${st === "P" ? "&#10003; Presente" : st === "M" ? "&#189; Medio" : "&#10007; Falta"}
+          <button class="mark ${st} ${x.status === st ? "on" : ""}" data-mark="${st}"
+                  aria-pressed="${x.status === st}" aria-label="${MARK_LABEL[st]} — ${esc(x.fullName)}">
+            ${MARK_ICON[st]} <span class="lbl">${MARK_LABEL[st]}</span>
           </button>`).join("")}
       </div>
       ${x.status && x.status !== "P" ? `
@@ -538,8 +647,12 @@ $("allPresent").addEventListener("click", () => {
   S.workers.forEach((w) => { if (!w.status) { w.status = "P"; w.reason = null; S.dirty.add(w.id); } });
   renderDay();
 });
-$("clearAll").addEventListener("click", () => {
-  if (!confirm("¿Quitar todas las marcas de este día?")) return;
+$("clearAll").addEventListener("click", async () => {
+  if (!(await ask({
+    title: "¿Limpiar el día?",
+    text: "Se quitan todas las marcas de esta fecha. Recuerda guardar para que el cambio quede registrado.",
+    ok: "Limpiar", cancel: "Cancelar", danger: true,
+  }))) return;
   S.workers.forEach((w) => { w.status = null; w.reason = null; S.dirty.add(w.id); });
   renderDay();
 });
@@ -628,7 +741,7 @@ function renderReport(r) {
       <tbody>
         ${r.rows.map((x) => `
           <tr class="clickable" data-w="${x.workerId}">
-            <td class="ellip" style="max-width:150px;">${esc(x.fullName)}${x.active ? "" : ' <span class="badge off">baja</span>'}</td>
+            <td class="ellip">${esc(x.fullName)}${x.active ? "" : ' <span class="badge off">baja</span>'}</td>
             <td>${x.P}</td><td>${x.M}</td><td>${x.A}</td>
             <td class="days">${fmtDays(x.worked)}</td>
           </tr>`).join("")}
@@ -655,7 +768,7 @@ $("reportBox").addEventListener("click", (e) => {
       ${lastReport.days.map((d) => {
         const st = row.marks[d];
         return `<div class="list-item">
-          <div class="grow"><div style="text-transform:capitalize;">${prettyDay(d)}</div></div>
+          <div class="grow"><div class="cap">${prettyDay(d)}</div></div>
           ${st ? label[st] : '<span class="muted">sin marcar</span>'}
         </div>`;
       }).join("")}
@@ -763,7 +876,11 @@ function workerForm(w) {
   });
 
   if (!isNew) $("wDel").addEventListener("click", async () => {
-    if (!confirm(`¿Dar de baja a ${w.fullName}? Su historial se conserva.`)) return;
+    if (!(await ask({
+      title: `¿Dar de baja a ${w.fullName}?`,
+      text: "Deja de aparecer al pasar lista, pero su historial y sus días trabajados se conservan en los reportes.",
+      ok: "Dar de baja", cancel: "Cancelar", danger: true,
+    }))) return;
     try {
       await api(`/api/workers?id=${w.id}`, { method: "DELETE" });
       closeModal(); toast("Trabajador dado de baja"); loadStaff(); loadSites();
@@ -791,7 +908,9 @@ function renderSettings() {
   $("settingsList").querySelectorAll("[data-act]").forEach((b) => {
     b.addEventListener("click", () => ({
       sites: sitesScreen, users: usersScreen, pw: passwordScreen,
-      out: () => { if (confirm("¿Cerrar sesión?")) logout(); },
+      out: async () => {
+        if (await ask({ title: "¿Cerrar sesión?", ok: "Cerrar sesión", cancel: "Cancelar", danger: true })) logout();
+      },
     }[b.dataset.act]()));
   });
 }
