@@ -126,7 +126,7 @@ node scripts/smoke.mjs           # corre y borra los datos de prueba
 node scripts/smoke.mjs --keep    # deja datos para mirar la app (jefe / obra1234)
 ```
 
-72 pruebas contra los handlers reales, sin levantar servidor. Requiere base **vacía**. Cubren, entre otras cosas, que una empresa no pueda tocar los datos de otra, que un capataz solo vea sus obras, que cada día se pague al monto que regía ese día, y que subir el pago no reescriba lo ya pagado.
+74 pruebas contra los handlers reales, sin levantar servidor. Requiere base **vacía**. Cubren, entre otras cosas, que una empresa no pueda tocar los datos de otra, que un capataz solo vea sus obras, que cada día se pague al monto que regía ese día, que subir el pago no reescriba lo ya pagado, y que los dias marcados antes de cargar el pago igual se paguen.
 
 ---
 
