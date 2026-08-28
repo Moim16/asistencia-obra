@@ -31,7 +31,7 @@ Sin marcar ≠ falta: un día sin marcar simplemente no suma (útil para domingo
 
 Igual que `marcador-vivo`, sin build ni framework:
 
-- **Front**: un solo `index.html` (HTML + CSS + JS vanilla) + PWA (`manifest.webmanifest`, `sw.js`)
+- **Front**: un solo `index.html` (HTML + CSS + JS vanilla) + PWA (`manifest.webmanifest`, `sw.js`). Tema claro/oscuro, con opción **Automático** que sigue al sistema (se guarda por dispositivo en `localStorage`)
 - **Back**: funciones serverless de Vercel en `api/*.js` (ESM, `export default handler`)
 - **DB**: **Turso / libSQL** (SQLite). En local cae solo a `data/asistencia.db` si no hay credenciales
 - **Auth**: propia — scrypt (`salt:hash`) + `sessionToken` en el header `x-session-token`. Lockout de 5 intentos / 15 min
@@ -97,6 +97,13 @@ Llama a los handlers con `req`/`res` falsos, sin levantar servidor. Requiere bas
 ---
 
 ## Convenciones
+
+**Estilo minimalista, dos temas.** Todo el color sale de tokens CSS en `:root`. El tema oscuro se define dos veces (una bajo `prefers-color-scheme: dark` para el automático, otra bajo `:root[data-theme="dark"]` para la elección manual) porque en CSS puro no hay forma de compartir el bloque. Reglas:
+
+- Usar siempre los tokens (`--ink`, `--muted`, `--line`, `--card`…), nunca un color literal. Lo que va encima de `--ink` usa `--on-ink`.
+- El color con significado (verde / ámbar / rojo) es **solo** para el estado de la marca. El resto es blanco, negro y grises.
+- Sin sombras salvo en lo que flota (diálogo y toast). La jerarquía la dan el espacio y el peso tipográfico.
+- Los iconos salen de `icon("nombre")`, que arma un `<svg>` de contorno de 24x24 que hereda color y tamaño del texto.
 
 **Nada de diálogos del navegador.** `confirm()` y `alert()` nativos se ven mal en el celular y, sobre todo, **congelan la página entera** mientras están abiertos. La app usa:
 
