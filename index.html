@@ -480,10 +480,7 @@ nav.bottom svg { width:21px; height:21px; }
         <label class="field grow" style="margin:0;"><span>Hasta</span><input type="date" id="repTo"></label>
       </div>
       <div class="card pad scroll-x" id="reportBox"><div class="empty">Cargando…</div></div>
-      <div class="row" style="gap:8px; margin:12px 0 20px;">
-        <button class="btn sm grow" id="pdfBtn"></button>
-        <button class="btn sm grow" id="csvBtn"></button>
-      </div>
+      <button class="btn sm wide" id="pdfBtn" style="margin:12px 0 20px;"></button>
     </section>
 
     <!-- ---------------- PERSONAL ---------------- -->
@@ -1640,31 +1637,6 @@ $("pdfBtn").addEventListener("click", () => {
   download(blob, name);
 });
 
-$("csvBtn").addEventListener("click", () => {
-  if (!lastReport || !lastReport.rows.length) return toast("Nada que exportar", "err");
-  const site = S.sites.find((s) => s.id === S.siteId)?.name || "obra";
-  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const lines = [
-    [q("Obra"), q(site)].join(";"),
-    [q("Desde"), q(lastReport.from), q("Hasta"), q(lastReport.to)].join(";"),
-    "",
-    ["Trabajador", "Oficio", "Presentes", "Medio dia", "Faltas", "Dias trabajados",
-     "Ganado (C$)", "Pagado (C$)", "Pendiente (C$)"].map(q).join(";"),
-    ...lastReport.rows.map((x) =>
-      [q(x.fullName), q(x.trade || ""), x.P, x.M, x.A, fmtDays(x.worked),
-       x.earned, x.paid, x.pending].join(";")),
-    [q("TOTAL"), "", lastReport.totals.P, lastReport.totals.M, lastReport.totals.A,
-     fmtDays(lastReport.totals.worked), lastReport.totals.earned,
-     lastReport.totals.paid, lastReport.totals.pending].join(";"),
-  ];
-  // BOM para que Excel abra bien los acentos.
-  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `asistencia_${site.replace(/[^\w]+/g, "-")}_${lastReport.from}_${lastReport.to}.csv`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-});
 
 /* ===========================================================================
    Vista: personal
@@ -2171,8 +2143,7 @@ $("dayNext").innerHTML = icon("right");
 $("siteChev").innerHTML = icon("down");
 $("loginMark").innerHTML = icon("helmet");
 $("addWorker").innerHTML = icon("plus") + "Agregar";
-$("csvBtn").innerHTML = icon("download") + "CSV";
-$("pdfBtn").innerHTML = icon("download") + "PDF";
+$("pdfBtn").innerHTML = icon("download") + "Descargar PDF";
 // El boton de cuenta muestra las iniciales del usuario (se completa al entrar).
 $("meBtn").textContent = "…";
 

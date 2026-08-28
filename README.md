@@ -43,7 +43,7 @@ En *Reporte → Pagos* se ve, por trabajador, lo **ganado**, lo **pagado** y lo 
 
 ### Reportes: PDF y WhatsApp
 
-- **Reporte de la obra** en PDF: todos los trabajadores con días, ganado, pagado y pendiente. También en CSV.
+- **Reporte de la obra** en PDF: todos los trabajadores con días, ganado, pagado y pendiente.
 - **Detalle por trabajador** en PDF: resumen con lo que le toca recibir y el día a día con montos.
 - **Enviar por WhatsApp**: en el celular abre el menú de compartir con el PDF adjunto; donde no se puede adjuntar (computador), manda un resumen en texto con los días trabajados y el total a recibir.
 
