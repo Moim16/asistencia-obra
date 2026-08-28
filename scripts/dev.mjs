@@ -17,6 +17,20 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
 
+// Las MISMAS cabeceras de seguridad que Vercel aplica en produccion. Se leen de
+// vercel.json para que no se desincronicen.
+//
+// Esto no es un detalle: sin la CSP puesta aqui, en local funcionaba codigo que
+// en produccion el navegador bloqueaba. Paso de verdad con una URL blob: en una
+// imagen, que la CSP no permite. Si el sitio real tiene reglas, el entorno de
+// desarrollo tiene que tenerlas tambien.
+const SECURITY_HEADERS = await (async () => {
+  try {
+    const cfg = JSON.parse(await readFile(join(ROOT, "vercel.json"), "utf8"));
+    return cfg.headers?.[0]?.headers ?? [];
+  } catch { return []; }
+})();
+
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -40,6 +54,7 @@ async function loadHandler(name) {
 createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const path = decodeURIComponent(url.pathname);
+  for (const h of SECURITY_HEADERS) res.setHeader(h.key, h.value);
 
   /* ------------------------------------------------------------------- API */
   if (path.startsWith("/api/")) {
@@ -84,7 +99,8 @@ createServer(async (req, res) => {
 }).listen(PORT, () => {
   const remote = !!process.env.TURSO_DATABASE_URL;
   console.log(`\n  Asistencia en Obra  ->  http://localhost:${PORT}`);
-  console.log(`  Base de datos: ${remote ? "Turso (remota)" : "data/asistencia.db (local)"}\n`);
+  console.log(`  Base de datos: ${remote ? "Turso (remota)" : "data/asistencia.db (local)"}`);
+  console.log(`  Cabeceras de seguridad: ${SECURITY_HEADERS.length} (las mismas de produccion)\n`);
 });
 
 function send(res, code, data) {

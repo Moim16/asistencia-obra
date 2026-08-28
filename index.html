@@ -579,24 +579,33 @@ const LOGO_MAX = 320;                 // lado mayor, en pixeles
 
 async function fileToLogo(file) {
   if (!file.type.startsWith("image/")) throw new Error("Elige una imagen.");
-  const url = URL.createObjectURL(file);
-  try {
-    const img = new Image();
-    await new Promise((ok, fail) => {
-      img.onload = ok;
-      img.onerror = () => fail(new Error("No se pudo leer esa imagen. Prueba con una foto JPG o PNG."));
-      img.src = url;
-    });
-    const escala = Math.min(1, LOGO_MAX / Math.max(img.width, img.height));
-    const c = document.createElement("canvas");
-    c.width = Math.max(1, Math.round(img.width * escala));
-    c.height = Math.max(1, Math.round(img.height * escala));
-    const ctx = c.getContext("2d");
-    ctx.fillStyle = "#fff";                     // JPEG no tiene transparencia
-    ctx.fillRect(0, 0, c.width, c.height);
-    ctx.drawImage(img, 0, 0, c.width, c.height);
-    return c.toDataURL("image/jpeg", 0.85);
-  } finally { URL.revokeObjectURL(url); }
+
+  // Se lee como data URI y NO con URL.createObjectURL. La CSP del sitio permite
+  // `data:` en img-src pero no `blob:`, asi que una URL de blob la bloquea el
+  // navegador en produccion y la imagen nunca carga.
+  const uri = await new Promise((ok, fail) => {
+    const fr = new FileReader();
+    fr.onload = () => ok(fr.result);
+    fr.onerror = () => fail(new Error("No se pudo leer el archivo."));
+    fr.readAsDataURL(file);
+  });
+
+  const img = new Image();
+  await new Promise((ok, fail) => {
+    img.onload = ok;
+    img.onerror = () => fail(new Error("No se pudo leer esa imagen. Prueba con una foto JPG o PNG."));
+    img.src = uri;
+  });
+
+  const escala = Math.min(1, LOGO_MAX / Math.max(img.width, img.height));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(img.width * escala));
+  c.height = Math.max(1, Math.round(img.height * escala));
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#fff";                     // JPEG no tiene transparencia
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", 0.85);
 }
 
 // data URI -> cadena binaria (un caracter por byte), que es como escribe el PDF.
