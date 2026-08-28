@@ -16,7 +16,8 @@
 
 import { db, ensureSchema, nowIso, STATUSES } from "../lib/db.js";
 import { readJson, clean, parseDay, parseId } from "../lib/http.js";
-import { currentUser, deny } from "../lib/auth.js";
+import { currentUser, deny, notYours, canSeeSite } from "../lib/auth.js";
+import { today } from "../lib/day.js";
 
 export default async function handler(req, res) {
   try {
@@ -31,6 +32,7 @@ export default async function handler(req, res) {
       const day = parseDay(req.query?.day);
       if (!siteId) return res.status(400).json({ error: "siteId inválido." });
       if (!day) return res.status(400).json({ error: "Fecha inválida (usa YYYY-MM-DD)." });
+      if (!(await canSeeSite(me, siteId))) return notYours(res);
 
       // Personal activo + su marca del dia (LEFT JOIN: los no marcados vienen en null).
       // El JOIN filtra tambien por obra: si un trabajador fue trasladado y ese dia
@@ -71,12 +73,12 @@ export default async function handler(req, res) {
       if (!siteId) return res.status(400).json({ error: "siteId inválido." });
       if (!day) return res.status(400).json({ error: "Fecha inválida (usa YYYY-MM-DD)." });
       if (!marks) return res.status(400).json({ error: "Falta la lista de marcas." });
+      if (!(await canSeeSite(me, siteId))) return notYours(res);
       if (marks.length > 500) return res.status(400).json({ error: "Demasiadas marcas en una sola llamada." });
 
-      // No se puede pasar lista del futuro. Tolerancia de 1 dia porque el navegador
-      // manda la fecha LOCAL de la obra y el servidor razona en UTC.
-      const limit = new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 10);
-      if (day > limit) return res.status(400).json({ error: "No se puede pasar lista de una fecha futura." });
+      // No se puede pasar lista del futuro. Sin tolerancias: servidor y app usan
+      // la misma fecha (hora de Nicaragua), asi que la comparacion es exacta.
+      if (day > today()) return res.status(400).json({ error: "No se puede pasar lista de una fecha futura." });
 
       // Solo se aceptan trabajadores que pertenecen a esta obra (evita marcar ajenos).
       const valid = new Set(

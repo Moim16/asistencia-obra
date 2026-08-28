@@ -9,7 +9,7 @@
 
 import { db, ensureSchema, nowIso } from "../lib/db.js";
 import { readJson, clean, parseId } from "../lib/http.js";
-import { currentUser, isAdmin, deny } from "../lib/auth.js";
+import { currentUser, isAdmin, deny, notYours, siteScope, canSeeSite } from "../lib/auth.js";
 
 export default async function handler(req, res) {
   try {
@@ -21,14 +21,16 @@ export default async function handler(req, res) {
     /* ------------------------------------------------------------------ GET */
     if (req.method === "GET") {
       const all = !!req.query?.all && isAdmin(me);
-      // Cada obra viene con su conteo de personal activo (lo muestra el selector).
+      // Solo las obras que este usuario puede ver: de su cuenta y, si es capataz,
+      // ademas asignadas a el. Cada una con su conteo de personal activo.
+      const scope = siteScope(me);
       const rs = await db.execute({
         sql: `SELECT s.id, s.name, s.address, s.active, s.createdAt,
                      (SELECT COUNT(*) FROM workers w WHERE w.siteId = s.id AND w.active = 1) AS workers
                 FROM sites s
-               ${all ? "" : "WHERE s.active = 1"}
+               WHERE ${scope.sql} ${all ? "" : "AND s.active = 1"}
                ORDER BY s.active DESC, s.name COLLATE NOCASE`,
-        args: [],
+        args: scope.args,
       });
       return res.status(200).json({
         sites: rs.rows.map((s) => ({
@@ -44,9 +46,10 @@ export default async function handler(req, res) {
     if (req.method === "POST") {
       const name = clean(body.name, 80);
       if (!name) return res.status(400).json({ error: "El nombre de la obra es obligatorio." });
+      if (!me.accountId) return res.status(400).json({ error: "Tu usuario no tiene empresa asignada." });
       const ins = await db.execute({
-        sql: `INSERT INTO sites (name, address, createdAt) VALUES (?, ?, ?)`,
-        args: [name, clean(body.address, 160), nowIso()],
+        sql: `INSERT INTO sites (name, address, accountId, createdAt) VALUES (?, ?, ?, ?)`,
+        args: [name, clean(body.address, 160), me.accountId, nowIso()],
       });
       return res.status(201).json({
         site: { id: Number(ins.lastInsertRowid), name, address: clean(body.address, 160), active: 1, workers: 0 },
@@ -57,6 +60,7 @@ export default async function handler(req, res) {
     if (req.method === "PUT") {
       const id = parseId(req.query?.id);
       if (!id) return res.status(400).json({ error: "id inválido." });
+      if (!(await canSeeSite(me, id))) return notYours(res);
       const sets = [], args = [];
       if ("name" in body) {
         const name = clean(body.name, 80);
@@ -76,6 +80,7 @@ export default async function handler(req, res) {
     if (req.method === "DELETE") {
       const id = parseId(req.query?.id);
       if (!id) return res.status(400).json({ error: "id inválido." });
+      if (!(await canSeeSite(me, id))) return notYours(res);
       const upd = await db.execute({ sql: `UPDATE sites SET active = 0 WHERE id = ?`, args: [id] });
       if (!upd.rowsAffected) return res.status(404).json({ error: "Obra no encontrada." });
       return res.status(200).json({ ok: true });

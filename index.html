@@ -417,12 +417,17 @@ nav.bottom svg { width:21px; height:21px; }
     <label class="field"><span>Contraseña</span>
       <input id="loginPw" type="password" autocomplete="current-password" required>
     </label>
-    <button class="btn primary wide" type="submit">Entrar</button>
+    <label class="field hidden" id="companyField"><span>Nombre de la empresa</span>
+      <input id="loginCompany" autocomplete="organization" placeholder="Constructora Los Pinos">
+    </label>
+    <button class="btn primary wide" type="submit" id="loginSubmit">Entrar</button>
     <div id="loginMsg"></div>
-    <p class="muted" style="margin:12px 0 0; text-align:center;">
-      Si es la primera vez que se usa el sistema, el usuario que entre queda como administrador.
-    </p>
   </form>
+  <p class="muted" style="margin:16px 0 0; text-align:center;">
+    <span id="switchText">¿Tu empresa todavía no está?</span>
+    <button id="switchMode" style="background:none; border:0; padding:0; font:inherit;
+            color:var(--ink); font-weight:600; text-decoration:underline; cursor:pointer;">Crear cuenta</button>
+  </p>
 </section>
 
 <!-- ===================== APP ===================== -->
@@ -464,14 +469,21 @@ nav.bottom svg { width:21px; height:21px; }
 
     <!-- ---------------- REPORTE ---------------- -->
     <section id="viewReport" class="hidden">
-      <h2>Días trabajados</h2>
+      <h2 id="repTitle">Días trabajados</h2>
+      <div class="seg" id="repTabs" style="margin-bottom:14px;">
+        <button data-tab="days" class="on">Días</button>
+        <button data-tab="pay">Pagos</button>
+      </div>
       <div class="chips" id="rangeChips"></div>
       <div class="row" style="gap:8px; margin-bottom:12px;">
         <label class="field grow" style="margin:0;"><span>Desde</span><input type="date" id="repFrom"></label>
         <label class="field grow" style="margin:0;"><span>Hasta</span><input type="date" id="repTo"></label>
       </div>
       <div class="card pad scroll-x" id="reportBox"><div class="empty">Cargando…</div></div>
-      <button class="btn sm wide" id="csvBtn" style="margin:12px 0 20px;"></button>
+      <div class="row" style="gap:8px; margin:12px 0 20px;">
+        <button class="btn sm grow" id="pdfBtn"></button>
+        <button class="btn sm grow" id="csvBtn"></button>
+      </div>
     </section>
 
     <!-- ---------------- PERSONAL ---------------- -->
@@ -511,13 +523,47 @@ nav.bottom svg { width:21px; height:21px; }
 /* ===========================================================================
    Estado y utilidades
    =========================================================================== */
+/* --------------------------------- fechas --------------------------------
+   Todo el sistema usa la hora de NICARAGUA (America/Managua, UTC-6 todo el
+   año). No la del telefono: un equipo con la zona mal configurada marcaria el
+   dia equivocado. El servidor usa exactamente la misma referencia.
+-------------------------------------------------------------------------- */
+const TZ_OBRA = "America/Managua";
+const dayFmt = new Intl.DateTimeFormat("en-CA", {   // en-CA formatea YYYY-MM-DD
+  timeZone: TZ_OBRA, year: "numeric", month: "2-digit", day: "2-digit",
+});
+
+// Hoy en la obra.
+const todayObra = () => dayFmt.format(new Date());
+
+// YYYY-MM-DD de un Date "suelto" (para aritmetica de calendario, sin zonas).
+const ymd = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+
+// Hoy como Date, para poder sumar y restar dias y meses.
+function hoyDate() {
+  const [y, m, d] = todayObra().split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function shiftDay(day, n) {
+  const [y, m, d] = day.split("-").map(Number);
+  return ymd(new Date(y, m - 1, d + n));
+}
+
+/* --------------------------------- dinero -------------------------------- */
+// Cordoba nicaraguense. Sin decimales cuando el monto es redondo.
+const nfMoney = new Intl.NumberFormat("es-NI", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+const money = (n) => "C$" + nfMoney.format(Number(n) || 0);
+
 const S = {
   token: localStorage.getItem("ao_token") || "",
   me: JSON.parse(localStorage.getItem("ao_me") || "null"),
   siteId: Number(localStorage.getItem("ao_site")) || null,
   sites: [],
+  account: JSON.parse(localStorage.getItem("ao_account") || "null"),
   view: "list",
-  day: todayLocal(),
+  repTab: "days",       // "days" | "pay": que muestra el reporte
+  day: todayObra(),
   workers: [],          // trabajadores del dia con su marca
   dirty: new Set(),     // ids con cambios sin guardar
   offline: false,       // la ultima llamada al servidor no llego
@@ -528,15 +574,6 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 
-// Fecha LOCAL en YYYY-MM-DD (nunca toISOString, que corre al dia UTC).
-function todayLocal(d = new Date()) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-function shiftDay(day, n) {
-  const [y, m, d] = day.split("-").map(Number);
-  const dt = new Date(y, m - 1, d + n);
-  return todayLocal(dt);
-}
 function prettyDay(day) {
   const [y, m, d] = day.split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString("es", { weekday:"long", day:"numeric", month:"long" });
@@ -584,6 +621,7 @@ const ICONS = {
   edit:      '<path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z"/>',
   info:      '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.1"/>',
   calendar:  '<rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/>',
+  whatsapp:  '<path d="M3.5 20.5l1.3-4.6a8.2 8.2 0 1 1 3.1 3l-4.4 1.6z"/><path d="M9 9.2c.2 1 .7 2 1.5 2.8s1.8 1.3 2.8 1.5l.9-1.2 1.9.8c-.2 1-1.1 1.6-2.1 1.5a7.4 7.4 0 0 1-6.1-6.1c-.1-1 .5-1.9 1.5-2.1l.8 1.9-1.2.9z"/>',
   offline:   '<path d="M2 2l20 20M5.2 12.6a11 11 0 0 1 3.6-2.3M2 8.9A16 16 0 0 1 6.6 6.2M17.4 6.2A16 16 0 0 1 22 8.9M15.2 10.3a11 11 0 0 1 3.6 2.3M8.6 16a6 6 0 0 1 6.8 0M12 19.8h.01"/>',
   cloud:     '<path d="M7.3 17.5a4.5 4.5 0 0 1 .4-9 6 6 0 0 1 11.4 1.7A4 4 0 0 1 18 17.5"/><path d="M12 11.5V20M9 14.5l3-3 3 3"/>',
   user:      '<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
@@ -822,20 +860,41 @@ addEventListener("offline", () => { S.offline = true; renderSyncBar(); });
 /* ===========================================================================
    Login / sesion
    =========================================================================== */
+// La pantalla de entrada hace dos cosas: entrar, o dar de alta una EMPRESA
+// nueva (que crea su cuenta aislada y a su primer administrador).
+let signupMode = false;
+$("switchMode").addEventListener("click", () => {
+  signupMode = !signupMode;
+  $("companyField").classList.toggle("hidden", !signupMode);
+  $("loginCompany").required = signupMode;
+  $("loginSubmit").textContent = signupMode ? "Crear cuenta" : "Entrar";
+  $("switchText").textContent = signupMode ? "¿Ya tienes cuenta?" : "¿Tu empresa todavía no está?";
+  $("switchMode").textContent = signupMode ? "Entrar" : "Crear cuenta";
+  $("loginMsg").innerHTML = "";
+});
+
 $("loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const btn = e.target.querySelector("button");
+  const btn = $("loginSubmit");
   btn.disabled = true;
   $("loginMsg").innerHTML = "";
   try {
-    const r = await api("/api/auth", {
-      method: "POST",
-      body: { name: $("loginName").value.trim(), password: $("loginPw").value },
-    });
-    S.token = r.token; S.me = r.user;
+    const r = signupMode
+      ? await api("/api/auth?signup=1", { method: "POST", body: {
+          company: $("loginCompany").value.trim(),
+          name: $("loginName").value.trim(),
+          password: $("loginPw").value,
+        }})
+      : await api("/api/auth", { method: "POST", body: {
+          name: $("loginName").value.trim(), password: $("loginPw").value,
+        }});
+    S.token = r.token; S.me = r.user; S.account = r.account || null;
     localStorage.setItem("ao_token", S.token);
     localStorage.setItem("ao_me", JSON.stringify(S.me));
+    localStorage.setItem("ao_account", JSON.stringify(S.account));
     $("loginPw").value = "";
+    // Empresa recien creada: no hay obras ni personal, se parte por ahi.
+    if (r.created) { await start(); return sitesScreen(); }
     await start();
   } catch (err) {
     $("loginMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`;
@@ -843,9 +902,10 @@ $("loginForm").addEventListener("submit", async (e) => {
 });
 
 function logout() {
-  S.token = ""; S.me = null; S.dirty.clear();
+  S.token = ""; S.me = null; S.account = null; S.dirty.clear();
   localStorage.removeItem("ao_token");
   localStorage.removeItem("ao_me");
+  localStorage.removeItem("ao_account");
   $("app").classList.add("hidden");
   $("login").classList.remove("hidden");
   document.body.classList.add("no-nav");
@@ -931,7 +991,7 @@ async function loadDay() {
   $("dayLabel").textContent = prettyDay(S.day);
   $("dayInput").value = S.day;
   $("dayNote").textContent =
-    S.day === todayLocal() ? "hoy" : (isWeekend(S.day) ? "fin de semana" : "");
+    S.day === todayObra() ? "hoy" : (isWeekend(S.day) ? "fin de semana" : "");
 
   if (!S.siteId) {
     $("workerList").innerHTML = emptyState("building", "No hay obras todavía.<br>Créala en <b>Ajustes → Obras</b>.");
@@ -1076,6 +1136,274 @@ $("saveBtn").addEventListener("click", async () => {
   } finally { btn.disabled = false; renderDay(); }
 });
 
+
+/* ===========================================================================
+   PDF
+
+   Generador minimo, escrito a mano. Un PDF es texto plano con una tabla de
+   posiciones al final, asi que para tablas y titulos no hace falta ninguna
+   libreria: no se toca el CSP, no hay 350 KB que bajar y funciona sin señal.
+
+   Usa las fuentes Helvetica que todo lector de PDF ya trae (no se incrusta
+   ninguna) con codificacion WinAnsi, que incluye tildes y eñes.
+   =========================================================================== */
+
+// Ancho de cada caracter en Helvetica, en milesimas de punto. Hace falta para
+// alinear numeros a la derecha; los digitos miden todos 556, asi que las
+// columnas de plata quedan perfectamente cuadradas.
+const HELV_W = (() => {
+  const w = {};
+  const put = (chars, val) => [...chars].forEach((c) => { w[c] = val; });
+  put(" ", 278); put("!", 278); put('"', 355); put("#$", 556); put("%", 889); put("&", 667);
+  put("'", 191); put("()", 333); put("*", 389); put("+", 584); put(",", 278); put("-", 333);
+  put(".", 278); put("/", 278); put("0123456789", 556); put(":;", 278); put("<=>", 584);
+  put("?", 556); put("@", 1015);
+  put("ADEHKNOQRSTUVXYZBCFGIJLMPW", 667);   // base; se afinan las distintas abajo
+  put("C", 722); put("D", 722); put("G", 778); put("I", 278); put("J", 500); put("L", 556);
+  put("M", 833); put("N", 722); put("O", 778); put("Q", 778); put("R", 722); put("T", 611);
+  put("U", 722); put("W", 944); put("Z", 611); put("F", 611);
+  put("abcdeghknopqsuvxyz", 556);
+  put("c", 500); put("f", 278); put("i", 222); put("j", 222); put("k", 500); put("l", 222);
+  put("m", 833); put("r", 333); put("s", 500); put("t", 278); put("v", 500); put("w", 722);
+  put("x", 500); put("y", 500); put("z", 500);
+  put("[]\\", 278); put("^", 469); put("_", 556); put("`", 333); put("{}", 334); put("|", 260); put("~", 584);
+  return w;
+})();
+
+const textWidth = (str, size) =>
+  [...String(str)].reduce((t, c) => t + (HELV_W[c] ?? 556), 0) * size / 1000;
+
+// Recorta el texto con "…" si no cabe en el ancho dado.
+function fitText(str, size, max) {
+  let t = String(str);
+  if (textWidth(t, size) <= max) return t;
+  while (t.length > 1 && textWidth(t + "…", size, max) > max) t = t.slice(0, -1);
+  return t + "…";
+}
+
+class MiniPdf {
+  constructor() {
+    this.W = 595; this.H = 842;      // A4 en puntos
+    this.pages = [];
+    this.newPage();
+  }
+  newPage() { this.buf = []; this.pages.push(this.buf); return this; }
+
+  // Coordenadas desde ARRIBA-izquierda, que es como se piensa una hoja.
+  // El PDF las cuenta desde abajo, asi que se invierte aqui y no en cada llamada.
+  text(x, y, str, { size = 10, bold = false, align = "left", gray = 0 } = {}) {
+    let t = String(str ?? "");
+    if (align === "right") x -= textWidth(t, size);
+    else if (align === "center") x -= textWidth(t, size) / 2;
+    const esc = t.replace(/[\\()]/g, (c) => "\\" + c);
+    this.buf.push(
+      `BT ${gray} g /${bold ? "F2" : "F1"} ${size} Tf 1 0 0 1 ${x.toFixed(2)} ${(this.H - y).toFixed(2)} Tm (${esc}) Tj ET`
+    );
+    return this;
+  }
+  line(x1, y1, x2, y2, { width = 0.6, gray = 0.8 } = {}) {
+    this.buf.push(`${gray} G ${width} w ${x1.toFixed(2)} ${(this.H - y1).toFixed(2)} m ${x2.toFixed(2)} ${(this.H - y2).toFixed(2)} l S`);
+    return this;
+  }
+  rect(x, y, w, h, gray = 0.95) {
+    this.buf.push(`${gray} g ${x.toFixed(2)} ${(this.H - y - h).toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f`);
+    return this;
+  }
+
+  blob() {
+    const objs = [];
+    const add = (body) => { objs.push(body); return objs.length; };   // devuelve el numero de objeto
+
+    const catalogN = add("");            // 1: se rellena al final (necesita el id de Pages)
+    const pagesN = add("");              // 2: idem (necesita los ids de las paginas)
+    const f1 = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+    const f2 = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
+
+    const pageIds = [];
+    for (const buf of this.pages) {
+      const stream = buf.join("\n");
+      const contN = add(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+      pageIds.push(add(
+        `<< /Type /Page /Parent ${pagesN} 0 R /MediaBox [0 0 ${this.W} ${this.H}] ` +
+        `/Resources << /Font << /F1 ${f1} 0 R /F2 ${f2} 0 R >> >> /Contents ${contN} 0 R >>`
+      ));
+    }
+    objs[catalogN - 1] = `<< /Type /Catalog /Pages ${pagesN} 0 R >>`;
+    objs[pagesN - 1] = `<< /Type /Pages /Kids [${pageIds.map((n) => n + " 0 R").join(" ")}] /Count ${pageIds.length} >>`;
+
+    let out = "%PDF-1.4\n";
+    const offsets = [];
+    objs.forEach((body, i) => {
+      offsets.push(out.length);
+      out += `${i + 1} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = out.length;
+    out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+    for (const off of offsets) out += String(off).padStart(10, "0") + " 00000 n \n";
+    out += `trailer\n<< /Size ${objs.length + 1} /Root ${catalogN} 0 R >>\nstartxref\n${xref}\n%%EOF`;
+
+    // Todo el contenido es Latin-1, asi que cada caracter es exactamente un byte.
+    const bytes = new Uint8Array(out.length);
+    for (let i = 0; i < out.length; i++) bytes[i] = out.charCodeAt(i) & 0xff;
+    return new Blob([bytes], { type: "application/pdf" });
+  }
+}
+
+/* --------------------------- armado de reportes -------------------------- */
+const M = 45;                 // margen
+const FONT_OK = (t) => String(t ?? "").replace(/[^\x20-\xFF]/g, "?");   // fuera de WinAnsi
+
+// Encabezado comun: empresa, obra y periodo.
+function pdfHeader(doc, titulo, sub) {
+  doc.text(M, M + 6, FONT_OK(S.account?.name || "Asistencia en Obra"), { size: 9, gray: 0.45 });
+  doc.text(M, M + 30, FONT_OK(titulo), { size: 19, bold: true });
+  doc.text(M, M + 48, FONT_OK(sub), { size: 9.5, gray: 0.4 });
+  doc.line(M, M + 58, 595 - M, M + 58);
+  return M + 84;              // y donde sigue el contenido
+}
+
+function pdfFooter(doc, pag) {
+  doc.text(M, 842 - 32, `Generado el ${new Date().toLocaleString("es-NI", { timeZone: TZ_OBRA })}`, { size: 7.5, gray: 0.55 });
+  doc.text(595 - M, 842 - 32, `Página ${pag}`, { size: 7.5, gray: 0.55, align: "right" });
+}
+
+// Reporte de la obra completa.
+function reportPdf(r) {
+  const doc = new MiniPdf();
+  const obra = S.sites.find((x) => x.id === S.siteId)?.name || "Obra";
+  let y = pdfHeader(doc, obra, `Del ${r.from} al ${r.to}`);
+  let pag = 1;
+
+  const cols = [M, 300, 375, 452, 595 - M];   // nombre | dias | ganado | pagado | pendiente
+  const head = () => {
+    doc.text(cols[0], y, "TRABAJADOR", { size: 7.5, bold: true, gray: 0.45 });
+    doc.text(cols[1], y, "DÍAS", { size: 7.5, bold: true, gray: 0.45, align: "right" });
+    doc.text(cols[2], y, "GANADO", { size: 7.5, bold: true, gray: 0.45, align: "right" });
+    doc.text(cols[3], y, "PAGADO", { size: 7.5, bold: true, gray: 0.45, align: "right" });
+    doc.text(cols[4], y, "PENDIENTE", { size: 7.5, bold: true, gray: 0.45, align: "right" });
+    y += 6; doc.line(M, y, 595 - M, y); y += 15;
+  };
+  head();
+
+  for (const x of r.rows) {
+    if (y > 842 - 70) {                       // salto de pagina
+      pdfFooter(doc, pag++); doc.newPage(); y = pdfHeader(doc, obra, `Del ${r.from} al ${r.to}`); head();
+    }
+    doc.text(cols[0], y, FONT_OK(fitText(x.fullName + (x.active ? "" : " (baja)"), 9.5, 240)), { size: 9.5 });
+    doc.text(cols[1], y, fmtDays(x.worked), { size: 9.5, align: "right" });
+    doc.text(cols[2], y, money(x.earned), { size: 9.5, align: "right" });
+    doc.text(cols[3], y, x.paid ? money(x.paid) : "-", { size: 9.5, align: "right", gray: 0.45 });
+    doc.text(cols[4], y, x.pending ? money(x.pending) : "al día", { size: 9.5, align: "right", bold: !!x.pending });
+    y += 8; doc.line(M, y, 595 - M, y, { gray: 0.92 }); y += 14;
+  }
+
+  y += 2;
+  doc.line(M, y - 10, 595 - M, y - 10, { width: 1, gray: 0.5 });
+  doc.text(cols[0], y, `TOTAL (${r.rows.length})`, { size: 10, bold: true });
+  doc.text(cols[1], y, fmtDays(r.totals.worked), { size: 10, bold: true, align: "right" });
+  doc.text(cols[2], y, money(r.totals.earned), { size: 10, bold: true, align: "right" });
+  doc.text(cols[3], y, money(r.totals.paid), { size: 10, bold: true, align: "right" });
+  doc.text(cols[4], y, money(r.totals.pending), { size: 10, bold: true, align: "right" });
+  pdfFooter(doc, pag);
+
+  return { blob: doc.blob(), name: `reporte_${obra.replace(/[^\w]+/g, "-")}_${r.from}_${r.to}.pdf` };
+}
+
+// Detalle de un trabajador: lo que trabajo dia a dia y cuanto le toca.
+function workerPdf(row, r) {
+  const doc = new MiniPdf();
+  const obra = S.sites.find((x) => x.id === S.siteId)?.name || "Obra";
+  let y = pdfHeader(doc, FONT_OK(row.fullName), `${FONT_OK(obra)} · del ${r.from} al ${r.to}`);
+  let pag = 1;
+
+  // Resumen arriba, que es lo que el trabajador quiere ver de un vistazo.
+  doc.rect(M, y - 14, 595 - 2 * M, 52, 0.96);
+  const cajas = [
+    ["Días trabajados", fmtDays(row.worked)],
+    ["Total ganado", money(row.earned)],
+    ["Ya pagado", money(row.paid)],
+    ["A recibir", money(row.pending)],
+  ];
+  const anchoCaja = (595 - 2 * M) / cajas.length;
+  cajas.forEach(([lbl, val], i) => {
+    const cx = M + anchoCaja * i + anchoCaja / 2;
+    doc.text(cx, y + 2, lbl.toUpperCase(), { size: 7, gray: 0.45, align: "center" });
+    doc.text(cx, y + 22, FONT_OK(val), { size: 13, bold: i === 3, align: "center" });
+  });
+  y += 62;
+
+  const ESTADO = { P: "Presente", M: "Medio día", A: "Falta" };
+  const cols = [M, 330, 440, 595 - M];
+  const head = () => {
+    doc.text(cols[0], y, "FECHA", { size: 7.5, bold: true, gray: 0.45 });
+    doc.text(cols[1], y, "ESTADO", { size: 7.5, bold: true, gray: 0.45, align: "right" });
+    doc.text(cols[2], y, "MONTO", { size: 7.5, bold: true, gray: 0.45, align: "right" });
+    doc.text(cols[3], y, "PAGADO", { size: 7.5, bold: true, gray: 0.45, align: "right" });
+    y += 6; doc.line(M, y, 595 - M, y); y += 14;
+  };
+  head();
+
+  // Solo los dias con marca: las filas vacias no aportan nada en papel.
+  const dias = r.days.filter((d) => row.marks[d]);
+  for (const d of dias) {
+    if (y > 842 - 70) {
+      pdfFooter(doc, pag++); doc.newPage();
+      y = pdfHeader(doc, FONT_OK(row.fullName), `${FONT_OK(obra)} · del ${r.from} al ${r.to}`); head();
+    }
+    const m = row.marks[d];
+    doc.text(cols[0], y, FONT_OK(prettyDay(d)), { size: 9.5 });
+    doc.text(cols[1], y, ESTADO[m.s], { size: 9.5, align: "right", gray: 0.35 });
+    doc.text(cols[2], y, money(m.amount), { size: 9.5, align: "right" });
+    doc.text(cols[3], y, m.paid ? "Si" : "-", { size: 9.5, align: "right", gray: 0.45 });
+    y += 8; doc.line(M, y, 595 - M, y, { gray: 0.92 }); y += 14;
+  }
+  if (!dias.length) doc.text(M, y, "Sin días marcados en este período.", { size: 9.5, gray: 0.5 });
+  pdfFooter(doc, pag);
+
+  const slug = row.fullName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w]+/g, "-");
+  return { blob: doc.blob(), name: `${slug}_${r.from}_${r.to}.pdf` };
+}
+
+/* ------------------------- descargar y compartir ------------------------- */
+function download(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// Manda el PDF por WhatsApp. En el celular se abre el menu de compartir con el
+// archivo adjunto; donde no se pueda adjuntar (computador), va el resumen en
+// texto, que para eso se arma igual.
+async function shareWhatsApp(blob, name, texto) {
+  try {
+    const file = new File([blob], name, { type: "application/pdf" });
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: name, text: texto });
+      return;
+    }
+  } catch (err) {
+    if (err?.name === "AbortError") return;      // el usuario cerro el menu
+  }
+  window.open("https://wa.me/?text=" + encodeURIComponent(texto), "_blank", "noopener");
+  toast("Se abrió WhatsApp con el resumen. El PDF lo puedes descargar aparte.");
+}
+
+// Resumen en texto: lo que de verdad importa saber.
+function resumenTexto(row, r) {
+  const obra = S.sites.find((x) => x.id === S.siteId)?.name || "la obra";
+  return [
+    `*${row.fullName}* — ${obra}`,
+    `Período: ${r.from} al ${r.to}`,
+    ``,
+    `Días trabajados: ${fmtDays(row.worked)}`,
+    `Total ganado: ${money(row.earned)}`,
+    row.paid ? `Ya pagado: ${money(row.paid)}` : null,
+    `*A recibir: ${money(row.pending)}*`,
+  ].filter(Boolean).join("\n");
+}
+
 /* ===========================================================================
    Vista: reporte
    =========================================================================== */
@@ -1088,18 +1416,18 @@ const RANGES = [
 
 // Semana de lunes a domingo (offset en semanas respecto de la actual).
 function weekRange(off) {
-  const d = new Date();
+  const d = hoyDate();
   d.setDate(d.getDate() + off * 7);
   const dow = (d.getDay() + 6) % 7;          // 0 = lunes
   const from = new Date(d); from.setDate(d.getDate() - dow);
   const to = new Date(from); to.setDate(from.getDate() + 6);
-  return [todayLocal(from), todayLocal(to)];
+  return [ymd(from), ymd(to)];
 }
 function monthRange(off) {
-  const d = new Date();
+  const d = hoyDate();
   const from = new Date(d.getFullYear(), d.getMonth() + off, 1);
   const to = new Date(d.getFullYear(), d.getMonth() + off + 1, 0);
-  return [todayLocal(from), todayLocal(to)];
+  return [ymd(from), ymd(to)];
 }
 
 $("rangeChips").innerHTML = RANGES.map((r, i) =>
@@ -1143,8 +1471,48 @@ async function loadReport() {
   }
 }
 
+$("repTabs").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-tab]");
+  if (!b) return;
+  S.repTab = b.dataset.tab;
+  $("repTabs").querySelectorAll("[data-tab]").forEach((x) => x.classList.toggle("on", x.dataset.tab === S.repTab));
+  $("repTitle").textContent = S.repTab === "pay" ? "Pagos" : "Días trabajados";
+  if (lastReport) renderReport(lastReport);
+});
+
 function renderReport(r) {
   if (!r.rows.length) { $("reportBox").innerHTML = emptyState("chart", "Sin datos en este período."); return; }
+
+  // Pestaña PAGOS: lo que gano, lo que ya cobro y lo que falta pagarle.
+  if (S.repTab === "pay") {
+    $("reportBox").innerHTML = `
+      <table class="tbl">
+        <thead><tr>
+          <th>Trabajador</th><th>Días</th><th>Ganado</th><th>Pagado</th><th>Pendiente</th>
+        </tr></thead>
+        <tbody>
+          ${r.rows.map((x) => `
+            <tr class="clickable" data-w="${x.workerId}">
+              <td class="ellip">${esc(x.fullName)}${x.active ? "" : ' <span class="badge off">baja</span>'}</td>
+              <td>${fmtDays(x.worked)}</td>
+              <td>${money(x.earned)}</td>
+              <td>${x.paid ? money(x.paid) : "—"}</td>
+              <td class="days" style="${x.pending ? "" : "color:var(--faint);font-weight:500;"}">${
+                x.pending ? money(x.pending) : "al día"}</td>
+            </tr>`).join("")}
+        </tbody>
+        <tfoot><tr>
+          <td>Total (${r.rows.length})</td>
+          <td>${fmtDays(r.totals.worked)}</td>
+          <td>${money(r.totals.earned)}</td>
+          <td>${money(r.totals.paid)}</td>
+          <td>${money(r.totals.pending)}</td>
+        </tr></tfoot>
+      </table>`;
+    return;
+  }
+
+  // Pestaña DIAS: el conteo puro de asistencia.
   $("reportBox").innerHTML = `
     <table class="tbl">
       <thead><tr>
@@ -1166,25 +1534,110 @@ function renderReport(r) {
     </table>`;
 }
 
-// Detalle dia a dia de un trabajador.
+// Detalle dia a dia de un trabajador, con lo que vale cada dia y si ya se pago.
 $("reportBox").addEventListener("click", (e) => {
   const tr = e.target.closest("[data-w]");
   if (!tr || !lastReport) return;
-  const row = lastReport.rows.find((x) => x.workerId === Number(tr.dataset.w));
+  workerDetail(Number(tr.dataset.w));
+});
+
+function workerDetail(workerId) {
+  const row = lastReport?.rows.find((x) => x.workerId === workerId);
   if (!row) return;
-  const label = { P:'<span class="chip ok">Presente</span>', M:'<span class="chip half">Medio día</span>', A:'<span class="chip bad">Falta</span>' };
+  const admin = S.me?.role === "admin";
+  const label = {
+    P: '<span class="chip dot ok">Presente</span>',
+    M: '<span class="chip dot half">Medio día</span>',
+    A: '<span class="chip dot bad">Falta</span>',
+  };
+
   openModal(`
     <h2>${esc(row.fullName)}</h2>
-    <p class="muted" style="margin:-6px 0 12px;">${lastReport.from} → ${lastReport.to} · <b>${fmtDays(row.worked)} días</b></p>
+    <p class="muted" style="margin:-6px 0 14px;">${lastReport.from} → ${lastReport.to}</p>
+
+    <div class="card pad" style="margin-bottom:14px;">
+      <div class="row" style="gap:0; text-align:center;">
+        <div class="grow"><div class="muted">Días</div><div style="font-size:19px; font-weight:600;">${fmtDays(row.worked)}</div></div>
+        <div class="grow"><div class="muted">Ganado</div><div style="font-size:19px; font-weight:600;">${money(row.earned)}</div></div>
+        <div class="grow"><div class="muted">Pendiente</div><div style="font-size:19px; font-weight:600; ${
+          row.pending ? "" : "color:var(--faint);"}">${money(row.pending)}</div></div>
+      </div>
+    </div>
+
+    <div class="row" style="gap:8px; margin-bottom:8px;">
+      <button class="btn grow" id="wsBtn">${icon("whatsapp")}Enviar</button>
+      <button class="btn grow" id="pdfWBtn">${icon("download")}PDF</button>
+    </div>
+
+    ${admin ? `
+      ${row.pending > 0 ? `<button class="btn primary wide" id="payBtn" style="margin-bottom:8px;">
+        ${icon("check")}Marcar como pagado (${money(row.pending)})</button>` : ""}
+      ${row.paid > 0 ? `<button class="btn danger wide" id="unpayBtn" style="margin-bottom:8px;">
+        Deshacer el pago del período</button>` : ""}
+    ` : ""}
+
+    <h3>Día a día</h3>
     <div class="card">
       ${lastReport.days.map((d) => {
-        const st = row.marks[d];
+        const m = row.marks[d];
         return `<div class="list-item">
-          <div class="grow"><div class="cap">${prettyDay(d)}</div></div>
-          ${st ? label[st] : '<span class="muted">sin marcar</span>'}
+          <div class="grow">
+            <div class="cap">${prettyDay(d)}</div>
+            ${m ? `<div class="muted">${money(m.amount)}${m.paid ? " · pagado" : ""}</div>` : ""}
+          </div>
+          ${m ? label[m.s] : '<span class="muted">sin marcar</span>'}
         </div>`;
       }).join("")}
     </div>`);
+
+  $("pdfWBtn").addEventListener("click", () => {
+    const { blob, name } = workerPdf(row, lastReport);
+    download(blob, name);
+  });
+  $("wsBtn").addEventListener("click", () => {
+    const { blob, name } = workerPdf(row, lastReport);
+    shareWhatsApp(blob, name, resumenTexto(row, lastReport));
+  });
+
+  const pagar = async (deshacer) => {
+    const q = `siteId=${S.siteId}&workerId=${workerId}&from=${lastReport.from}&to=${lastReport.to}`;
+    try {
+      const r = deshacer
+        ? await api(`/api/payments?${q}`, { method: "DELETE" })
+        : await api("/api/payments", { method: "POST", body: {
+            siteId: S.siteId, workerId, from: lastReport.from, to: lastReport.to } });
+      toast(r.days
+        ? `${plural(r.days, "día", "días")} ${deshacer ? "sin pagar de nuevo" : "marcados como pagados"}`
+        : "No había nada que cambiar");
+      closeModal();
+      await loadReport();
+      workerDetail(workerId);          // se vuelve a abrir con los numeros nuevos
+    } catch (err) { toast(err.message, "err"); }
+  };
+
+  const pb = $("payBtn");
+  if (pb) pb.addEventListener("click", async () => {
+    if (await ask({
+      title: `¿Marcar como pagado?`,
+      text: `Se registran ${money(row.pending)} pagados a ${row.fullName} por el período ${lastReport.from} → ${lastReport.to}. El monto queda congelado: si después le subes el pago por día, esto no cambia.`,
+      ok: "Marcar pagado", cancel: "Cancelar",
+    })) pagar(false);
+  });
+
+  const ub = $("unpayBtn");
+  if (ub) ub.addEventListener("click", async () => {
+    if (await ask({
+      title: "¿Deshacer el pago?",
+      text: "Los días de este período vuelven a quedar como pendientes.",
+      ok: "Deshacer", cancel: "Cancelar", danger: true,
+    })) pagar(true);
+  });
+}
+
+$("pdfBtn").addEventListener("click", () => {
+  if (!lastReport || !lastReport.rows.length) return toast("Nada que exportar", "err");
+  const { blob, name } = reportPdf(lastReport);
+  download(blob, name);
 });
 
 $("csvBtn").addEventListener("click", () => {
@@ -1195,10 +1648,14 @@ $("csvBtn").addEventListener("click", () => {
     [q("Obra"), q(site)].join(";"),
     [q("Desde"), q(lastReport.from), q("Hasta"), q(lastReport.to)].join(";"),
     "",
-    ["Trabajador", "Oficio", "Presentes", "Medio dia", "Faltas", "Dias trabajados"].map(q).join(";"),
+    ["Trabajador", "Oficio", "Presentes", "Medio dia", "Faltas", "Dias trabajados",
+     "Ganado (C$)", "Pagado (C$)", "Pendiente (C$)"].map(q).join(";"),
     ...lastReport.rows.map((x) =>
-      [q(x.fullName), q(x.trade || ""), x.P, x.M, x.A, fmtDays(x.worked)].join(";")),
-    [q("TOTAL"), "", lastReport.totals.P, lastReport.totals.M, lastReport.totals.A, fmtDays(lastReport.totals.worked)].join(";"),
+      [q(x.fullName), q(x.trade || ""), x.P, x.M, x.A, fmtDays(x.worked),
+       x.earned, x.paid, x.pending].join(";")),
+    [q("TOTAL"), "", lastReport.totals.P, lastReport.totals.M, lastReport.totals.A,
+     fmtDays(lastReport.totals.worked), lastReport.totals.earned,
+     lastReport.totals.paid, lastReport.totals.pending].join(";"),
   ];
   // BOM para que Excel abra bien los acentos.
   const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
@@ -1217,7 +1674,7 @@ async function loadStaff() {
   if (!S.siteId) { $("staffList").innerHTML = `<div class="empty">No hay obras todavía.</div>`; return; }
   $("staffList").innerHTML = `<div class="empty">Cargando…</div>`;
   try {
-    const { workers } = await api(`/api/workers?siteId=${S.siteId}&all=1`);
+    const { workers } = await api(`/api/workers?siteId=${S.siteId}&all=1&today=${todayObra()}`);
     if (!workers.length) {
       $("staffList").innerHTML = emptyState("people", "Sin personal en esta obra.");
       return;
@@ -1226,7 +1683,9 @@ async function loadStaff() {
       <button class="list-item" data-w="${w.id}">
         <div class="grow">
           <div class="ellip"><b>${esc(w.fullName)}</b>${w.active ? "" : ' <span class="badge off">baja</span>'}</div>
-          <div class="muted ellip">${esc(w.trade || "—")}${w.docId ? " · " + esc(w.docId) : ""}</div>
+          <div class="muted ellip">${esc(w.trade || "—")}${
+            w.dailyRate != null ? " · " + money(w.dailyRate) + "/día" : " · sin pago por día"}${
+            w.nextRateFrom ? ' · <b style="color:var(--half);">sube el ' + esc(w.nextRateFrom) + "</b>" : ""}</div>
         </div>
         ${S.me?.role === "admin" ? icon("chevron", "chev") : ""}
       </button>`).join("");
@@ -1254,12 +1713,18 @@ function workerForm(w) {
       <label class="field"><span>Oficio</span>
         <input id="wTrade" value="${esc(w?.trade || "")}" list="trades" maxlength="40" placeholder="Albañil, ayudante, maestro…">
         <datalist id="trades">
-          ${["Maestro albañil","Albañil","Ayudante","Jornalero","Carpintero","Fierrero","Electricista","Gasfíter","Pintor","Capataz"]
+          ${["Maestro de obra","Albañil","Ayudante","Peón","Carpintero","Armador","Electricista","Fontanero","Pintor","Soldador","Operador","Capataz"]
             .map((t) => `<option value="${t}">`).join("")}
         </datalist>
       </label>
       <label class="field"><span>Documento (RUT / DNI)</span><input id="wDoc" value="${esc(w?.docId || "")}" maxlength="30"></label>
       <label class="field"><span>Teléfono</span><input id="wPhone" type="tel" value="${esc(w?.phone || "")}" maxlength="30"></label>
+      ${isNew ? `
+        <label class="field"><span>Pago por día completo (C$)</span>
+          <input id="wRate" type="number" min="0" step="any" inputmode="decimal" placeholder="0">
+        </label>
+        <p class="muted" style="margin:-6px 0 14px;">Medio día paga la mitad. Después se puede cambiar desde una fecha.</p>
+      ` : ""}
       ${isNew ? "" : `
         <label class="field"><span>Obra</span>
           <select id="wSite">${S.sites.map((s) => `<option value="${s.id}" ${s.id === w.siteId ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>
@@ -1271,7 +1736,9 @@ function workerForm(w) {
       <div id="wMsg"></div>
       <button class="btn primary wide" type="submit">${isNew ? "Agregar" : "Guardar"}</button>
     </form>
-    ${isNew ? "" : `<button class="btn danger wide" id="wDel" style="margin-top:10px;">${icon("trash")}Dar de baja</button>`}
+    ${isNew ? "" : `
+      <button class="btn wide" id="wRates" style="margin-top:10px;">${icon("cloud")}Pago por día e historial</button>
+      <button class="btn danger wide" id="wDel" style="margin-top:10px;">${icon("trash")}Dar de baja</button>`}
   `);
 
   $("wForm").addEventListener("submit", async (e) => {
@@ -1281,13 +1748,20 @@ function workerForm(w) {
       docId: $("wDoc").value, phone: $("wPhone").value,
     };
     if (!isNew) { body.siteId = Number($("wSite").value); body.active = $("wActive").checked; }
-    else body.siteId = S.siteId;
+    else {
+      body.siteId = S.siteId;
+      const rate = $("wRate").value.trim();
+      // El pago inicial rige desde HOY EN LA OBRA (no desde la fecha del servidor).
+      if (rate !== "") { body.dailyRate = Number(rate); body.rateFrom = todayObra(); }
+    }
     try {
       await api(isNew ? "/api/workers" : `/api/workers?id=${w.id}`, { method: isNew ? "POST" : "PUT", body });
       closeModal(); toast(isNew ? "Trabajador agregado" : "Guardado");
       loadStaff(); loadSites();
     } catch (err) { $("wMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`; }
   });
+
+  if (!isNew) $("wRates").addEventListener("click", () => ratesScreen(w));
 
   if (!isNew) $("wDel").addEventListener("click", async () => {
     if (!(await ask({
@@ -1299,6 +1773,81 @@ function workerForm(w) {
       await api(`/api/workers?id=${w.id}`, { method: "DELETE" });
       closeModal(); toast("Trabajador dado de baja"); loadStaff(); loadSites();
     } catch (err) { toast(err.message, "err"); }
+  });
+}
+
+/* ------------------------ pago por dia e historial -----------------------
+   Cada monto rige DESDE una fecha. Asi se le puede subir el pago a alguien a
+   partir del lunes sin tocar lo que ya trabajo: los dias viejos se siguen
+   pagando al monto que regia ese dia.
+-------------------------------------------------------------------------- */
+async function ratesScreen(w) {
+  const { rates } = await api(`/api/workers?id=${w.id}&rates=1`);
+  const hoy = todayObra();
+  const vigente = rates.find((r) => r.fromDay <= hoy);
+
+  openModal(`
+    <h2>Pago por día de ${esc(w.fullName)}</h2>
+    <p class="muted" style="margin:-6px 0 14px;">
+      ${vigente ? `Hoy gana <b>${money(vigente.amount)}</b> por día completo.` : "Todavía no tiene pago por día asignado."}
+      Medio día paga la mitad.
+    </p>
+
+    <form id="rForm" class="card pad">
+      <label class="field"><span>Nuevo pago por día (C$)</span>
+        <input id="rAmount" type="number" min="0" step="any" inputmode="decimal" required
+               value="${vigente ? vigente.amount : ""}">
+      </label>
+      <label class="field"><span>Rige desde</span>
+        <input id="rFrom" type="date" value="${hoy}" required>
+      </label>
+      <p class="muted" style="margin:-6px 0 14px;">
+        Pon una fecha futura para dejar programada una mejora. Los días anteriores
+        no cambian.
+      </p>
+      <div id="rMsg"></div>
+      <button class="btn primary wide" type="submit">Guardar</button>
+    </form>
+
+    <h3>Historial</h3>
+    <div class="card">
+      ${rates.length ? rates.map((r) => `
+        <div class="list-item">
+          <div class="grow">
+            <div><b>${money(r.amount)}</b> ${r.fromDay > hoy ? '<span class="badge">programado</span>' : ""}</div>
+            <div class="muted">desde ${esc(r.fromDay)}</div>
+          </div>
+          <button class="btn sm danger" data-rate="${r.id}">Quitar</button>
+        </div>`).join("") : emptyState("info", "Sin montos cargados.")}
+    </div>
+  `);
+
+  $("rForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await api("/api/workers?rates=1", { method: "POST", body: {
+        workerId: w.id, amount: Number($("rAmount").value), fromDay: $("rFrom").value,
+      }});
+      toast("Pago por día guardado");
+      ratesScreen(w);
+      loadStaff();
+    } catch (err) { $("rMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`; }
+  });
+
+  $("modalRoot").querySelectorAll("[data-rate]").forEach((b) => {
+    b.addEventListener("click", async () => {
+      if (!(await ask({
+        title: "¿Quitar esta tarifa?",
+        text: "Los días que cubría pasarán a pagarse con la tarifa anterior. Lo ya pagado no cambia.",
+        ok: "Quitar", cancel: "Cancelar", danger: true,
+      }))) return;
+      try {
+        await api(`/api/workers?rate=${b.dataset.rate}`, { method: "DELETE" });
+        toast("Tarifa quitada");
+        ratesScreen(w);
+        loadStaff();
+      } catch (err) { toast(err.message, "err"); }
+    });
   });
 }
 
@@ -1327,7 +1876,7 @@ function renderSettings() {
             <b class="ellip">${esc(S.me?.name || "")}</b>
             <span class="badge ${admin ? "admin" : ""}">${admin ? "Admin" : "Capataz"}</span>
           </div>
-          <div class="muted ellip">${esc(S.me?.fullName || "Sin nombre completo")}</div>
+          <div class="muted ellip">${esc(S.account?.name || S.me?.fullName || "—")}</div>
         </div>
       </div>
     </div>
@@ -1487,7 +2036,9 @@ async function usersScreen() {
         <button class="list-item" data-u="${u.id}">
           <div class="grow">
             <div class="ellip"><b>${esc(u.name)}</b>${u.active ? "" : ' <span class="badge off">inactivo</span>'}</div>
-            <div class="muted ellip">${esc(u.fullName || "—")}</div>
+            <div class="muted ellip">${esc(u.fullName || "—")}${
+              u.role === "admin" ? " · todas las obras"
+              : " · " + plural((u.siteIds || []).length, "obra", "obras")}</div>
           </div>
           <span class="badge ${u.role === "admin" ? "admin" : ""}">${u.role === "admin" ? "Admin" : "Capataz"}</span>
         </button>`).join("")}
@@ -1510,10 +2061,22 @@ function userForm(u) {
       <label class="field"><span>Nombre completo</span><input id="uFull" value="${esc(u?.fullName || "")}" maxlength="80"></label>
       <label class="field"><span>Rol</span>
         <select id="uRole">
-          <option value="foreman" ${u?.role !== "admin" ? "selected" : ""}>Capataz — pasa lista y ve reportes</option>
-          <option value="admin" ${u?.role === "admin" ? "selected" : ""}>Administrador — además gestiona obras y personal</option>
+          <option value="foreman" ${u?.role !== "admin" ? "selected" : ""}>Capataz — solo las obras que le asignes</option>
+          <option value="admin" ${u?.role === "admin" ? "selected" : ""}>Administrador — todas las obras de la empresa</option>
         </select>
       </label>
+      <div class="field" id="uSitesBox">
+        <span>Obras que puede ver</span>
+        <div class="card">
+          ${S.sites.length ? S.sites.map((st) => `
+            <label class="list-item" style="cursor:pointer;">
+              <input type="checkbox" class="uSite" value="${st.id}" style="width:20px; height:20px;"
+                     ${(u?.siteIds || []).includes(st.id) ? "checked" : ""}>
+              <span class="grow ellip">${esc(st.name)}</span>
+            </label>`).join("") : emptyState("building", "Primero crea una obra.")}
+        </div>
+        <p class="muted" style="margin:6px 0 0;">Sin ninguna marcada, el capataz no verá nada.</p>
+      </div>
       <label class="field"><span>${isNew ? "Contraseña * (mínimo 6)" : "Nueva contraseña (dejar vacío para no cambiar)"}</span>
         <input id="uPw" type="password" ${isNew ? "required" : ""} minlength="6" maxlength="64" autocomplete="new-password"></label>
       ${isNew ? "" : `
@@ -1525,16 +2088,22 @@ function userForm(u) {
       <button class="btn primary wide" type="submit">${isNew ? "Crear" : "Guardar"}</button>
     </form>
   `);
+  // El admin ve todas las obras de su empresa: la asignacion solo aplica al capataz.
+  const syncSitesBox = () => $("uSitesBox").classList.toggle("hidden", $("uRole").value === "admin");
+  $("uRole").addEventListener("change", syncSitesBox);
+  syncSitesBox();
+
   $("uForm").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const siteIds = [...$("uSitesBox").querySelectorAll(".uSite:checked")].map((c) => Number(c.value));
     try {
       if (isNew) {
         await api("/api/auth?new=1", { method: "POST", body: {
           name: $("uName").value.trim(), password: $("uPw").value,
-          fullName: $("uFull").value, role: $("uRole").value,
+          fullName: $("uFull").value, role: $("uRole").value, siteIds,
         }});
       } else {
-        const body = { fullName: $("uFull").value, role: $("uRole").value, active: $("uActive").checked };
+        const body = { fullName: $("uFull").value, role: $("uRole").value, active: $("uActive").checked, siteIds };
         if ($("uPw").value) body.password = $("uPw").value;
         await api(`/api/auth?id=${u.id}`, { method: "PUT", body });
       }
@@ -1601,7 +2170,8 @@ $("dayNext").innerHTML = icon("right");
 $("siteChev").innerHTML = icon("down");
 $("loginMark").innerHTML = icon("helmet");
 $("addWorker").innerHTML = icon("plus") + "Agregar";
-$("csvBtn").innerHTML = icon("download") + "Descargar CSV";
+$("csvBtn").innerHTML = icon("download") + "CSV";
+$("pdfBtn").innerHTML = icon("download") + "PDF";
 // El boton de cuenta muestra las iniciales del usuario (se completa al entrar).
 $("meBtn").textContent = "…";
 
@@ -1613,9 +2183,10 @@ if ("serviceWorker" in navigator) {
   renderSyncBar();
   if (!S.token) return;
   try {
-    const { me } = await api("/api/auth");
-    S.me = me;
+    const { me, account } = await api("/api/auth");
+    S.me = me; S.account = account || null;
     localStorage.setItem("ao_me", JSON.stringify(me));
+    localStorage.setItem("ao_account", JSON.stringify(S.account));
     await start();
     syncQueue();                 // por si quedo algo de la ultima vez
   } catch (err) {

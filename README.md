@@ -1,6 +1,6 @@
 # Asistencia en Obra
 
-PWA para llevar la asistencia diaria del personal de una obra y saber **cuántos días trabajó cada albañil** en un período.
+PWA para llevar la asistencia diaria del personal de una obra, saber **cuántos días trabajó cada albañil** y **cuánto hay que pagarle**.
 
 El **capataz pasa lista** desde su celular: por cada trabajador marca *Presente*, *Medio día* o *Falta* (con motivo). Los albañiles **no necesitan cuenta ni celular**.
 
@@ -8,14 +8,20 @@ El **capataz pasa lista** desde su celular: por cada trabajador marca *Presente*
 
 ## Cómo funciona
 
+### Empresas, usuarios y permisos
+
+Cada empresa es una **cuenta aislada**: sus obras, su personal y sus usuarios. Un admin nunca ve nada de otra empresa.
+
 | Rol | Puede |
 |---|---|
-| **Administrador** | Todo: crear obras, dar de alta/baja personal, crear capataces, pasar lista y ver reportes |
-| **Capataz** | Pasar lista y ver reportes de cualquier obra |
+| **Administrador** | Todo lo de SU empresa: crear obras, dar de alta/baja personal, fijar el pago por día, registrar pagos, crear usuarios y asignarles obras |
+| **Capataz** | Pasar lista y ver reportes **solo de las obras que le asignaron**. Sin asignaciones no ve ninguna |
 
-**Arranque**: la primera vez, la base está vacía y **el primer usuario que entra queda creado como administrador**. Después de eso el registro público se cierra: los usuarios nuevos los crea el admin desde *Ajustes → Usuarios*.
+Para empezar, en la pantalla de entrada se usa **Crear cuenta**: se registra la empresa y su primer administrador. Después, los usuarios nuevos los crea ese admin desde *Ajustes → Usuarios del sistema*, marcando qué obras verá cada uno.
 
-### Cálculo de días trabajados
+Con `ALLOW_SIGNUP=0` se cierra el registro público (la primera cuenta siempre se puede crear, para no quedar sin forma de entrar).
+
+### Días trabajados
 
 | Marca | Vale |
 |---|---|
@@ -25,38 +31,77 @@ El **capataz pasa lista** desde su celular: por cada trabajador marca *Presente*
 
 Sin marcar ≠ falta: un día sin marcar simplemente no suma (útil para domingos o días que la obra no operó).
 
+### Pago por día
+
+Cada trabajador tiene su **pago por día completo**, y **medio día paga la mitad**. Se guarda con **historial por fecha de vigencia**: se le puede subir el pago a alguien a partir del próximo lunes sin tocar lo que ya trabajó, porque cada día se paga al monto que regía *ese día*.
+
+En *Reporte → Pagos* se ve, por trabajador, lo **ganado**, lo **pagado** y lo **pendiente**, y desde ahí se marca un período como pagado.
+
+> **Al pagar, el monto se congela.** Queda registrado lo que de verdad se le pagó ese día. Si después le subes el pago por día, lo ya pagado no se reescribe.
+
+### Reportes: PDF y WhatsApp
+
+- **Reporte de la obra** en PDF: todos los trabajadores con días, ganado, pagado y pendiente. También en CSV.
+- **Detalle por trabajador** en PDF: resumen con lo que le toca recibir y el día a día con montos.
+- **Enviar por WhatsApp**: en el celular abre el menú de compartir con el PDF adjunto; donde no se puede adjuntar (computador), manda un resumen en texto con los días trabajados y el total a recibir.
+
+El PDF se genera **sin ninguna librería externa** (ver `MiniPdf` en `index.html`): no hay que tocar el CSP, no hay cientos de KB que bajar y funciona sin señal. Usa las fuentes Helvetica que ya trae todo lector de PDF, con codificación WinAnsi (soporta tildes y eñes).
+
+### La fecha de la obra
+
+Todo el sistema usa la hora de **Nicaragua** (`America/Managua`, UTC-6 todo el año), en el servidor y en la app. No se usa la zona del teléfono: un equipo mal configurado marcaría el día equivocado. Los montos van en **córdobas (C$)**.
+
+### Sin conexión
+
+En obra la señal es mala, así que **pasar lista no depende de la red**:
+
+- Lo que se ve se guarda en el teléfono (obras y estado del día por fecha).
+- Lo que se marca sin red va a una **cola** y se envía sola al recuperar la señal (o con el botón *Sincronizar*).
+- Si el envío falla, la marca **se conserva** y se reintenta: nunca se descarta en silencio.
+- Una barra de estado avisa cuándo hay algo sin enviar.
+
+El reporte y la gestión de personal sí necesitan conexión.
+
 ---
 
 ## Stack
 
 Igual que `marcador-vivo`, sin build ni framework:
 
-- **Front**: un solo `index.html` (HTML + CSS + JS vanilla) + PWA (`manifest.webmanifest`, `sw.js`). Tema claro/oscuro, con opción **Automático** que sigue al sistema (se guarda por dispositivo en `localStorage`)
+- **Front**: un solo `index.html` (HTML + CSS + JS vanilla) + PWA (`manifest.webmanifest`, `sw.js`). Tema claro/oscuro con opción **Automático**
 - **Back**: funciones serverless de Vercel en `api/*.js` (ESM, `export default handler`)
 - **DB**: **Turso / libSQL** (SQLite). En local cae solo a `data/asistencia.db` si no hay credenciales
 - **Auth**: propia — scrypt (`salt:hash`) + `sessionToken` en el header `x-session-token`. Lockout de 5 intentos / 15 min
-- **Esquema**: se auto-crea con `ensureSchema()` (`CREATE TABLE IF NOT EXISTS`). No hay migraciones
+- **Esquema**: se auto-crea con `ensureSchema()` (`CREATE TABLE IF NOT EXISTS` + `ALTER` idempotentes). No hay migraciones
 
-### Funciones serverless (5 de las 12 del plan Hobby)
+### Funciones serverless (6 de las 12 del plan Hobby)
 
 | Endpoint | Qué hace |
 |---|---|
-| `api/auth.js` | Login, arranque del primer admin, gestión de usuarios |
+| `api/auth.js` | Alta de empresa, login, usuarios y asignación de obras |
 | `api/sites.js` | Obras |
-| `api/workers.js` | Personal de cada obra |
+| `api/workers.js` | Personal y pago por día (con historial) |
 | `api/attendance.js` | Pasar lista de un día (leer y guardar) |
-| `api/report.js` | Días trabajados por trabajador en un rango |
+| `api/report.js` | Días trabajados y montos por período |
+| `api/payments.js` | Marcar días como pagados (y deshacer) |
 
 ### Tablas
 
 ```
-users       quienes entran a la app (admin / capataz)
-sites       obras
-workers     albañiles (pertenecen a una obra)
-attendance  una fila por trabajador y día  ->  UNIQUE (workerId, day)
+accounts      empresas (el cerco duro: nadie ve fuera de la suya)
+users         quienes entran a la app (admin / capataz)
+site_users    qué obras ve cada capataz
+sites         obras
+workers       albañiles (pertenecen a una obra)
+worker_rates  pago por día del trabajador, vigente DESDE una fecha
+attendance    una fila por trabajador y día  ->  UNIQUE (workerId, day)
+              paidAt / paidAmount = pago, con el monto congelado
 ```
 
-`attendance` guarda su propio `siteId`: si un trabajador se traslada de obra, su historial anterior **queda en la obra donde realmente trabajó**. Dar de baja a alguien no borra nada — sigue apareciendo en los reportes del período en que trabajó.
+Dos decisiones que importan para la liquidación:
+
+- `attendance` guarda su propio `siteId`: si un trabajador se traslada, su historial **queda en la obra donde realmente trabajó**.
+- Dar de baja a alguien no borra nada — sigue apareciendo en los reportes del período en que trabajó.
 
 ---
 
@@ -68,7 +113,7 @@ node scripts/dev.mjs                    # http://localhost:3000  (base local)
 node --env-file=.env scripts/dev.mjs    # http://localhost:3000  (contra Turso)
 ```
 
-`scripts/dev.mjs` sirve los archivos estaticos y enruta `/api/<x>` al handler de `api/<x>.js` igual que Vercel, sin pedir login interactivo (`npx vercel dev` tambien funciona).
+`scripts/dev.mjs` sirve los archivos estáticos y enruta `/api/<x>` al handler de `api/<x>.js` igual que Vercel, sin pedir login interactivo (`npx vercel dev` también funciona).
 
 Sin `.env` usa el archivo `data/asistencia.db` (no se commitea). Cero cuenta, cero setup.
 
@@ -79,18 +124,17 @@ node scripts/smoke.mjs           # corre y borra los datos de prueba
 node scripts/smoke.mjs --keep    # deja datos para mirar la app (jefe / obra1234)
 ```
 
-Llama a los handlers con `req`/`res` falsos, sin levantar servidor. Requiere base **vacía** (la primera prueba es el arranque del primer admin). Sirve igual contra SQLite local que contra Turso.
+72 pruebas contra los handlers reales, sin levantar servidor. Requiere base **vacía**. Cubren, entre otras cosas, que una empresa no pueda tocar los datos de otra, que un capataz solo vea sus obras, que cada día se pague al monto que regía ese día, y que subir el pago no reescriba lo ya pagado.
 
 ---
 
 ## Despliegue
 
-1. **Crear la base en Turso** — en [turso.tech](https://turso.tech) → *Create Database* (nombre: `asistencia-obra`). Copiar la **URL** `libsql://…` y generar un **token**.
-2. **Env vars en Vercel** (Project → Settings → Environment Variables):
-   - `TURSO_DATABASE_URL`
-   - `TURSO_AUTH_TOKEN`
-3. Deploy. Entrar a la app y **crear el primer usuario** (queda como administrador).
-4. Desde la app: crear la obra → agregar el personal → pasar lista.
+1. **Crear la base en Turso** — en [turso.tech](https://turso.tech) → *Create Database*. Copiar la **URL** `libsql://…` y generar un **token**.
+2. **Importar el repo en Vercel** ([vercel.com/new](https://vercel.com/new)) con *Framework Preset* = **Other**, sin Build Command ni Output Directory.
+3. **Environment Variables**: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` y, si quieres cerrar el registro, `ALLOW_SIGNUP=0`.
+4. Deploy → abrir la URL → **Crear cuenta** con el nombre de la empresa.
+5. Desde la app: crear la obra → agregar el personal con su pago por día → pasar lista.
 
 `vercel.json` ya trae las cabeceras de seguridad (CSP, X-Frame-Options, nosniff, etc.).
 
@@ -110,12 +154,18 @@ Llama a los handlers con `req`/`res` falsos, sin levantar servidor. Requiere bas
 - `await ask({ title, text, ok, cancel, danger })` → promesa que resuelve `true`/`false`, para confirmar
 - `toast(texto, "ok" | "err")` → aviso breve que no interrumpe
 
+**Nunca calcular "hoy" con UTC.** Se usa `today()` de `lib/day.js` en el servidor y `todayObra()` en la app: ambos dan la fecha de Nicaragua. De tarde allá ya es el día siguiente en UTC, y un monto fechado así empezaría a regir mañana.
+
+**Los permisos se comprueban por obra.** El personal, la asistencia y los pagos cuelgan de la obra, así que basta con `canSeeSite()` / `canSeeWorker()` de `lib/auth.js`. Quien no tiene acceso recibe **404, no 403**: no debería poder deducir que la obra existe.
+
+**El vocabulario es el de Nicaragua.** Lo que gana el trabajador por día es el **pago por día** (no "jornal"), y los oficios del listado son los de allá (fontanero, armador, maestro de obra…).
+
 ---
 
 ## Pendientes / posibles mejoras
 
-1. **Marcar sin conexión.** Hoy el service worker cachea solo el "cascarón": la app **abre** sin señal, pero no se puede cargar ni guardar la lista. En obra la conectividad suele ser mala → guardar las marcas en `localStorage` y sincronizarlas al recuperar red es la mejora de mayor impacto.
-2. **Jornal y liquidación.** La columna `workers.dailyRate` ya existe sin uso. Falta la UI y multiplicar por `worked` en el reporte.
-3. **Capataces por obra.** Hoy cualquier usuario ve todas las obras. Si hacen falta permisos por obra, agregar una tabla `site_users`.
-4. **Horas extras.** El modelo es por jornada (1 / 0,5 / 0). Si se necesitan horas reales, agregar columnas de entrada/salida a `attendance`.
-5. **Feriados.** Marcar un día como no laborable para toda la obra de una vez, en lugar de trabajador por trabajador.
+1. **Horas extras.** El modelo es por jornada (1 / 0,5 / 0). Si se necesitan horas reales, agregar columnas de entrada/salida a `attendance`.
+2. **Feriados.** Marcar un día como no laborable para toda la obra de una vez, en lugar de trabajador por trabajador.
+3. **Adelantos y descuentos.** Restar del pendiente lo que se entregó a cuenta.
+4. **Recuperar contraseña.** Hoy solo el admin puede resetear la de un capataz; si el admin pierde la suya, hay que tocar la base a mano.
+5. **Firma del trabajador.** Dejar constancia en el PDF de que recibió el pago.
