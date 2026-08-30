@@ -37,6 +37,18 @@ Cada trabajador tiene su **pago por día completo**, y **medio día paga la mita
 
 > **El primer monto cubre hacia atrás.** Si un día es anterior a la primera tarifa registrada, se paga igual con esa primera tarifa. Lo normal es marcar días y recién después cargar cuánto gana la persona; sin esta regla esos días quedarían en cero. Los cambios **programados hacia adelante** sí valen solo desde su fecha.
 
+### Firma del trabajador
+
+Al marcar a alguien **Presente** o **Medio día** aparece un botón **Firmar**: se le pasa el teléfono y firma con el dedo, igual que la planilla de papel. Sirve como evidencia cuando después alguien dice que sí vino un día que no vino.
+
+Es **opcional**: se puede guardar el día sin firma, y el resumen avisa cuántos trabajaron y todavía no firman, para saber a quién hay que buscar.
+
+La firma se borra sola si el día pasa a **falta** o queda **sin marcar** — firmar una ausencia no significa nada.
+
+> **La huella dactilar no se puede hacer desde una app web.** El navegador no da acceso al sensor para leer la huella de otra persona; lo único que existe (WebAuthn) autentica al dueño del teléfono, así que probaría que el capataz estaba ahí, no el trabajador. Para huellas de verdad harían falta lectores físicos y una app nativa.
+
+La firma viaja **junto con la marca** en el mismo `POST`, no en una llamada aparte: así la cola de "sin conexión" la arrastra sola. Y la lista del día devuelve solo un booleano `signed`, nunca las imágenes — se piden aparte cuando hay que verlas.
+
 ### Abonos y día de pago
 
 El **día de pago es el sábado**. Cuando un trabajador pide plata por adelantado, se registra el **abono** desde *Reporte → Pagos → + Abono* (fecha, monto y motivo).
@@ -75,6 +87,14 @@ Se carga desde *Ajustes → Empresa → Nombre y logo*, y aparece en la cabecera
 
 Es JPEG a propósito: es el único formato que se puede incrustar tal cual en un PDF, sin recomprimir nada. Se guarda como data URI en la tabla `accounts`, así que viaja con la sesión y funciona sin conexión.
 
+### Instalar en el teléfono
+
+La app se instala como una aplicación normal: en Android, desde *Ajustes → Aplicación → Instalar en el teléfono* (o el menú de Chrome); en iPhone, desde Safari con *Compartir → Añadir a pantalla de inicio*. La app detecta si ya está instalada y esconde la opción.
+
+Los iconos PNG los genera `node scripts/make-icons.mjs` a partir de la misma geometría de `icon.svg`, dibujando pixel a pixel y codificando el PNG con `zlib` — sin dependencias de imagen.
+
+> **Chrome en Android no ofrece instalar si el manifest solo trae un SVG**: exige al menos un PNG de 192x192. Ese era el motivo de que nunca apareciera la opción. El icono `maskable` va con margen porque Android lo recorta con su propia forma.
+
 ### La fecha de la obra
 
 Todo el sistema usa la hora de **Nicaragua** (`America/Managua`, UTC-6 todo el año), en el servidor y en la app. No se usa la zona del teléfono: un equipo mal configurado marcaría el día equivocado. Los montos van en **córdobas (C$)**.
@@ -109,7 +129,7 @@ Igual que `marcador-vivo`, sin build ni framework:
 | `api/auth.js` | Alta de empresa, login, usuarios y asignación de obras |
 | `api/sites.js` | Obras |
 | `api/workers.js` | Personal y pago por día (con historial) |
-| `api/attendance.js` | Pasar lista de un día (leer y guardar) |
+| `api/attendance.js` | Pasar lista de un día (leer y guardar), con la firma |
 | `api/report.js` | Días trabajados y montos por período |
 | `api/payments.js` | Marcar días como pagados (y deshacer), descontando abonos |
 | `api/advances.js` | Abonos: registrar, listar y quitar |
@@ -125,6 +145,7 @@ workers       albañiles (pertenecen a una obra)
 worker_rates  pago por día del trabajador, vigente DESDE una fecha
 attendance    una fila por trabajador y día  ->  UNIQUE (workerId, day)
               paidAt / paidAmount = pago, con el monto congelado
+attendance_signs  firma del trabajador, misma clave (workerId, day)
 advances      abonos entregados por adelantado
               settledAt = cuándo se descontó (NULL = todavía pendiente)
 ```
@@ -155,7 +176,7 @@ node scripts/smoke.mjs           # corre y borra los datos de prueba
 node scripts/smoke.mjs --keep    # deja datos para mirar la app (jefe / obra1234)
 ```
 
-102 pruebas contra los handlers reales, sin levantar servidor. Requiere base **vacía**. Cubren, entre otras cosas, que una empresa no pueda tocar los datos de otra, que un capataz solo vea sus obras, que cada día se pague al monto que regía ese día, que subir el pago no reescriba lo ya pagado, que los días marcados antes de cargar el pago igual se paguen, y que los abonos se descuenten y se devuelvan bien al deshacer un pago.
+116 pruebas contra los handlers reales, sin levantar servidor. Requiere base **vacía**. Cubren, entre otras cosas, que una empresa no pueda tocar los datos de otra, que un capataz solo vea sus obras, que cada día se pague al monto que regía ese día, que subir el pago no reescriba lo ya pagado, que los días marcados antes de cargar el pago igual se paguen, que los abonos se descuenten y se devuelvan bien al deshacer un pago, y que la firma se borre al marcar falta o desmarcar el día.
 
 ---
 
@@ -198,4 +219,5 @@ node scripts/smoke.mjs --keep    # deja datos para mirar la app (jefe / obra1234
 1. **Horas extras.** El modelo es por jornada (1 / 0,5 / 0). Si se necesitan horas reales, agregar columnas de entrada/salida a `attendance`.
 2. **Feriados.** Marcar un día como no laborable para toda la obra de una vez, en lugar de trabajador por trabajador.
 4. **Recuperar contraseña.** Hoy solo el admin puede resetear la de un capataz; si el admin pierde la suya, hay que tocar la base a mano.
-5. **Firma del trabajador.** Dejar constancia en el PDF de que recibió el pago.
+5. **Firma al recibir el pago.** Hoy se firma la asistencia diaria; falta que firme el sábado sobre el detalle, como comprobante de que recibió la plata.
+6. **Ver la firma desde el reporte.** Se guarda y se puede consultar desde la lista del día, pero todavía no sale en el PDF ni se puede abrir desde el reporte del período.

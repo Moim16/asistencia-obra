@@ -241,6 +241,73 @@ check("fecha futura rechazada",
 check("fecha inexistente rechazada", (await call(attendance, { token: A.token, query: { siteId: obraA1, day: "2026-02-31" } })).status === 400);
 
 /* ========================================================================== */
+section("Firma del trabajador");
+
+const FIRMA = JPEG_1PX;   // basta cualquier JPEG valido para el ida y vuelta
+
+r = await call(attendance, { token: A.token, query: { siteId: obraA1, day: day(0) } });
+check("sin firmar, `signed` viene en false",
+  r.body.workers.every((w) => w.signed === false), JSON.stringify(r.body.workers.map((w) => [w.fullName, w.signed])));
+check("el resumen cuenta los que trabajaron y no firmaron",
+  r.body.summary.unsigned === 2, JSON.stringify(r.body.summary));
+
+// La firma viaja junto con la marca, no en una llamada aparte.
+r = await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA1, day: day(0),
+  marks: [{ workerId: juan, status: "M", reason: "Permiso", sign: FIRMA }] } });
+check("se guarda la firma con la marca", r.body.signed === 1, JSON.stringify(r.body));
+
+r = await call(attendance, { token: A.token, query: { siteId: obraA1, day: day(0) } });
+check("ahora aparece como firmado", r.body.workers.find((w) => w.id === juan).signed === true);
+check("y baja el conteo de sin firmar", r.body.summary.unsigned === 1, JSON.stringify(r.body.summary));
+
+r = await call(attendance, { token: A.token, query: { siteId: obraA1, day: day(0), sign: juan } });
+check("se puede recuperar la imagen de la firma", r.status === 200 && r.body.image === FIRMA, JSON.stringify({ status: r.status }));
+check("la lista del dia NO arrastra las imagenes",
+  (await call(attendance, { token: A.token, query: { siteId: obraA1, day: day(0) } }))
+    .body.workers.every((w) => !("image" in w)));
+
+// Volver a guardar sin mandar `sign` no debe borrar lo que ya habia.
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA1, day: day(0),
+  marks: [{ workerId: juan, status: "M", reason: "Licencia" }] } });
+r = await call(attendance, { token: A.token, query: { siteId: obraA1, day: day(0) } });
+check("corregir el motivo no borra la firma", r.body.workers.find((w) => w.id === juan).signed === true);
+
+// Marcar falta tiene que borrarla: firmar una ausencia no significa nada.
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA1, day: day(0),
+  marks: [{ workerId: juan, status: "A", reason: "Falta" }] } });
+r = await call(attendance, { token: A.token, query: { siteId: obraA1, day: day(0) } });
+check("marcar falta borra la firma", r.body.workers.find((w) => w.id === juan).signed === false);
+
+// Y desmarcar del todo tambien.
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA1, day: day(0),
+  marks: [{ workerId: juan, status: "P", sign: FIRMA }] } });
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA1, day: day(0),
+  marks: [{ workerId: juan, status: "" }] } });
+r = await call(attendance, { token: A.token, query: { siteId: obraA1, day: day(0), sign: juan } });
+check("desmarcar el dia borra la firma", r.status === 404, JSON.stringify(r.body));
+
+// Se puede quitar a mano mandando cadena vacia.
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA1, day: day(0),
+  marks: [{ workerId: juan, status: "P", sign: FIRMA }] } });
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA1, day: day(0),
+  marks: [{ workerId: juan, status: "P", sign: "" }] } });
+r = await call(attendance, { token: A.token, query: { siteId: obraA1, day: day(0) } });
+check("se puede quitar la firma a mano", r.body.workers.find((w) => w.id === juan).signed === false);
+
+check("un PNG como firma se rechaza",
+  (await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA1, day: day(0),
+    marks: [{ workerId: juan, status: "P", sign: "data:image/png;base64,iVBORw0KGgo=" }] } })).status === 400);
+check("una firma enorme se rechaza",
+  (await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA1, day: day(0),
+    marks: [{ workerId: juan, status: "P", sign: "data:image/jpeg;base64," + "A".repeat(300000) }] } })).status === 400);
+check("otra empresa no puede leer una firma mia",
+  (await call(attendance, { token: B.token, query: { siteId: obraA1, day: day(0), sign: juan } })).status === 404);
+
+// Se deja el dia como lo esperaban las comprobaciones siguientes.
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA1, day: day(0),
+  marks: [{ workerId: juan, status: "M", reason: "Permiso" }] } });
+
+/* ========================================================================== */
 section("Reporte: dias y plata");
 
 r = await call(report, { token: A.token, query: { siteId: obraA1, from: day(-30), to: day(0) } });
@@ -402,7 +469,7 @@ check("la empresa no puede quedarse sin admin", r.status === 400, JSON.stringify
 
 /* ========================================================================== */
 if (!process.argv.includes("--keep")) {
-  for (const t of ["advances", "attendance", "worker_rates", "workers", "site_users", "sites", "users", "accounts"]) {
+  for (const t of ["advances", "attendance_signs", "attendance", "worker_rates", "workers", "site_users", "sites", "users", "accounts"]) {
     await db.execute(`DELETE FROM ${t}`);
   }
   console.log("\nDatos de prueba borrados (usa --keep para conservarlos).");

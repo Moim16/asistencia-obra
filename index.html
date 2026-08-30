@@ -7,6 +7,11 @@
 <title>Asistencia en Obra</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/icon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Asistencia">
+<meta name="mobile-web-app-capable" content="yes">
 <script>
 // Se aplica el tema guardado ANTES de pintar, para que no se vea el destello
 // blanco al abrir la app en modo oscuro.
@@ -269,6 +274,26 @@ h3 { font-size:11px; font-weight:600; margin:22px 0 8px; color:var(--faint); tex
   border-top:1px solid var(--line);
 }
 .savebar .inner { max-width:640px; margin:0 auto; }
+
+/* --------------------------------------------------------------- firma --
+   El trabajador firma con el dedo, igual que la planilla de papel. */
+.sign-pad {
+  width:100%; height:190px; border:1px dashed var(--line-2); border-radius:var(--r);
+  background:#fff; touch-action:none;      /* el dedo dibuja, no hace scroll */
+  display:block;
+}
+.sign-hint {
+  text-align:center; font-size:12.5px; color:var(--faint); margin:8px 0 0;
+}
+.wk .firma {
+  display:inline-flex; align-items:center; gap:5px; border:1px solid var(--line-2);
+  background:var(--card); border-radius:999px; padding:5px 11px; font-size:12.5px;
+  color:var(--muted); margin-top:9px; font-weight:500;
+}
+.wk .firma:hover { background:var(--soft); }
+.wk .firma.ok { background:var(--ok-bg); border-color:var(--ok-line); color:var(--ok); }
+.wk .firma svg { width:14px; height:14px; }
+.sign-view { width:100%; border:1px solid var(--line); border-radius:var(--r); background:#fff; }
 
 /* --------------------------------------------------- estado de conexion --
    Solo aparece cuando hay algo que decir: sin señal, o marcas sin enviar. */
@@ -712,6 +737,8 @@ const ICONS = {
   edit:      '<path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z"/>',
   info:      '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.1"/>',
   calendar:  '<rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/>',
+  install:   '<path d="M12 3v11M8 10.5l4 4 4-4"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
+  pen:       '<path d="M3 20.5h4L18 9.5a2.3 2.3 0 0 0-3.3-3.3L3.5 17.3v3.2z"/><path d="M13.5 7.5l3 3"/>',
   image:     '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="8.5" cy="10" r="1.8"/><path d="M3.5 17l4.5-4.5 3.5 3.5 3-3 6 6"/>',
   whatsapp:  '<path d="M3.5 20.5l1.3-4.6a8.2 8.2 0 1 1 3.1 3l-4.4 1.6z"/><path d="M9 9.2c.2 1 .7 2 1.5 2.8s1.8 1.3 2.8 1.5l.9-1.2 1.9.8c-.2 1-1.1 1.6-2.1 1.5a7.4 7.4 0 0 1-6.1-6.1c-.1-1 .5-1.9 1.5-2.1l.8 1.9-1.2.9z"/>',
   offline:   '<path d="M2 2l20 20M5.2 12.6a11 11 0 0 1 3.6-2.3M2 8.9A16 16 0 0 1 6.6 6.2M17.4 6.2A16 16 0 0 1 22 8.9M15.2 10.3a11 11 0 0 1 3.6 2.3M8.6 16a6 6 0 0 1 6.8 0M12 19.8h.01"/>',
@@ -1003,6 +1030,62 @@ function logout() {
   document.body.classList.add("no-nav");
 }
 
+/* ------------------------------ instalacion ------------------------------
+   Android avisa por `beforeinstallprompt` cuando la app se puede instalar. Se
+   guarda el evento para poder ofrecerlo desde Ajustes: si no, el usuario tiene
+   que ir a buscar la opcion al menu del navegador y casi nadie la encuentra.
+
+   iOS no soporta ese evento: ahi se explican los pasos a mano.
+-------------------------------------------------------------------------- */
+let promptInstalar = null;
+const yaInstalada = () =>
+  matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const esIOS = () =>
+  /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();                 // se ofrece desde Ajustes, no de golpe
+  promptInstalar = e;
+  if (S.view === "settings") renderSettings();
+});
+addEventListener("appinstalled", () => {
+  promptInstalar = null;
+  toast("Aplicación instalada");
+  if (S.view === "settings") renderSettings();
+});
+
+async function instalarApp() {
+  if (promptInstalar) {
+    promptInstalar.prompt();
+    const { outcome } = await promptInstalar.userChoice;
+    if (outcome === "accepted") promptInstalar = null;
+    return;
+  }
+  // Sin evento disponible: se explica como hacerlo a mano.
+  openModal(`
+    <h2>Instalar la aplicación</h2>
+    ${esIOS() ? `
+      <p class="muted">En iPhone se instala desde el propio Safari:</p>
+      <div class="card">
+        <div class="list-item"><span class="grow">1. Toca el botón <b>Compartir</b> (el cuadrito con la flecha hacia arriba).</span></div>
+        <div class="list-item"><span class="grow">2. Baja y elige <b>Añadir a pantalla de inicio</b>.</span></div>
+        <div class="list-item"><span class="grow">3. Toca <b>Añadir</b>. Queda como una app más.</span></div>
+      </div>
+      <p class="muted" style="margin-top:12px;">Tiene que ser desde Safari: en Chrome para iPhone no aparece la opción.</p>
+    ` : `
+      <p class="muted">En Android, desde Chrome:</p>
+      <div class="card">
+        <div class="list-item"><span class="grow">1. Toca el menú <b>⋮</b> arriba a la derecha.</span></div>
+        <div class="list-item"><span class="grow">2. Elige <b>Instalar aplicación</b> (o <b>Añadir a pantalla de inicio</b>).</span></div>
+      </div>
+      <p class="muted" style="margin-top:12px;">
+        Si no aparece, es que ya está instalada o el navegador todavía no la reconoce: cierra y vuelve a abrir la página.
+      </p>
+    `}
+  `);
+}
+
 // Muestra el logo de la empresa en la cabecera (o lo esconde si no hay).
 function paintBrand() {
   const el = $("brandLogo");
@@ -1142,6 +1225,10 @@ function renderDay() {
     `<span class="chip dot half">${plural(n("M"), "medio día", "medios días")}</span>` +
     `<span class="chip dot bad">${plural(n("A"), "falta", "faltas")}</span>` +
     (pend ? `<span class="chip dot">${pend} sin marcar</span>` : "") +
+    ((() => {
+      const sinFirma = w.filter((x) => (x.status === "P" || x.status === "M") && !(x.signed || x.sign)).length;
+      return sinFirma ? `<span class="chip dot half">${sinFirma} sin firmar</span>` : "";
+    })()) +
     `<span class="chip">${fmtDays(jornadas)} ${jornadas === 1 ? "jornada" : "jornadas"}</span>`;
 
   $("workerList").innerHTML = w.map((x) => `
@@ -1165,6 +1252,10 @@ function renderDay() {
         <div class="reasons">
           ${REASONS.map((r) => `<button class="reason ${x.reason === r ? "on" : ""}" data-reason="${esc(r)}">${esc(r)}</button>`).join("")}
         </div>` : ""}
+      ${x.status === "P" || x.status === "M" ? `
+        <button class="firma ${x.signed || x.sign ? "ok" : ""}" data-sign="${x.id}">
+          ${icon(x.signed || x.sign ? "check" : "pen")}${x.signed || x.sign ? "Firmado" : "Firmar"}
+        </button>` : ""}
     </div>`).join("");
 
   $("saveBar").classList.toggle("hidden", !S.dirty.size || S.view !== "list");
@@ -1184,10 +1275,32 @@ $("workerList").addEventListener("click", (e) => {
     const st = markBtn.dataset.mark;
     w.status = w.status === st ? null : st;   // volver a tocar el mismo estado lo desmarca
     if (w.status === "P" || !w.status) w.reason = null;
+    // Firmar una falta (o un dia sin marcar) no significa nada: se quita.
+    if (w.status === "A" || !w.status) { w.sign = ""; w.signed = false; }
     S.dirty.add(id);
     renderDay();
     return;
   }
+  const signBtn = e.target.closest("[data-sign]");
+  if (signBtn) {
+    (async () => {
+      // Si ya firmo y la firma esta en el servidor, se muestra antes de rehacerla.
+      let actual = w.sign || null;
+      if (!actual && w.signed) {
+        try {
+          actual = (await api(`/api/attendance?siteId=${S.siteId}&day=${S.day}&sign=${w.id}`)).image;
+        } catch { /* sin conexion: se firma de nuevo y listo */ }
+      }
+      const firma = await signaturePad(w.fullName, { actual });
+      if (firma === undefined) return;          // cerro sin guardar
+      w.sign = firma;                           // "" = quitarla
+      w.signed = !!firma;
+      S.dirty.add(id);
+      renderDay();
+    })();
+    return;
+  }
+
   const reasonBtn = e.target.closest("[data-reason]");
   if (reasonBtn) {
     const r = reasonBtn.dataset.reason;
@@ -1219,7 +1332,11 @@ $("saveBtn").addEventListener("click", async () => {
   // cuando no hay red (una `const` dentro del try no se ve desde el catch).
   const marks = [...S.dirty].map((id) => {
     const w = S.workers.find((x) => x.id === id);
-    return { workerId: id, status: w.status || "", reason: w.reason || null };
+    const m = { workerId: id, status: w.status || "", reason: w.reason || null };
+    // `sign` solo se manda si se toco en esta sesion: si no, el servidor deja la
+    // que ya tuviera. "" significa quitarla.
+    if (w.sign !== undefined) m.sign = w.sign;
+    return m;
   });
   try {
     await api("/api/attendance", { method: "POST", body: { siteId: S.siteId, day: S.day, marks } });
@@ -1559,6 +1676,97 @@ function resumenTexto(row, r) {
     ``,
     `*A recibir: ${money(row.pending)}*`,
   ].filter((x) => x !== null).join("\n");
+}
+
+/* ---------------------------------- firma --------------------------------
+   Lienzo para firmar con el dedo. Se exporta a JPEG sobre blanco porque es lo
+   que se puede incrustar en el PDF, y pesa unos pocos KB.
+-------------------------------------------------------------------------- */
+function signaturePad(nombre, { actual = null } = {}) {
+  return new Promise((resolve) => {
+    openModal(`
+      <h2>Firma de ${esc(nombre)}</h2>
+      <p class="muted" style="margin:-6px 0 14px;">
+        Pásale el teléfono para que firme con el dedo.
+      </p>
+      ${actual ? `<img class="sign-view" src="${esc(actual)}" alt="Firma actual" style="margin-bottom:12px;">
+        <p class="muted" style="margin:-6px 0 14px;">Ya tiene una firma. Si firma de nuevo, reemplaza a la anterior.</p>` : ""}
+      <canvas id="sPad" class="sign-pad"></canvas>
+      <p class="sign-hint">Firmar aquí arriba</p>
+      <div class="row" style="gap:8px; margin-top:14px;">
+        <button class="btn grow" id="sClear">Borrar</button>
+        <button class="btn primary grow" id="sOk">Guardar firma</button>
+      </div>
+      ${actual ? `<button class="btn danger wide" id="sDel" style="margin-top:8px;">Quitar la firma</button>` : ""}
+    `);
+
+    const cv = $("sPad");
+    // El lienzo se dibuja a la resolucion real de la pantalla: si no, en un
+    // celular la firma sale pixelada.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const rect = cv.getBoundingClientRect();
+    cv.width = Math.round(rect.width * dpr);
+    cv.height = Math.round(rect.height * dpr);
+    const ctx = cv.getContext("2d");
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, rect.width, rect.height);
+    ctx.strokeStyle = "#111";
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    let dibujando = false, hayTrazo = false, ultimo = null;
+    const punto = (e) => {
+      const r = cv.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    };
+    const empezar = (e) => {
+      dibujando = true; hayTrazo = true;
+      ultimo = punto(e);
+      cv.setPointerCapture?.(e.pointerId);
+      e.preventDefault();
+    };
+    const mover = (e) => {
+      if (!dibujando) return;
+      const p = punto(e);
+      ctx.beginPath();
+      ctx.moveTo(ultimo.x, ultimo.y);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      ultimo = p;
+      e.preventDefault();
+    };
+    const soltar = () => { dibujando = false; };
+    cv.addEventListener("pointerdown", empezar);
+    cv.addEventListener("pointermove", mover);
+    cv.addEventListener("pointerup", soltar);
+    cv.addEventListener("pointercancel", soltar);
+    cv.addEventListener("pointerleave", soltar);
+
+    const limpiar = () => {
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, rect.width, rect.height);
+      hayTrazo = false;
+    };
+    $("sClear").addEventListener("click", limpiar);
+
+    const cerrar = (valor) => { closeModal(); resolve(valor); };
+    $("sOk").addEventListener("click", () => {
+      if (!hayTrazo) return toast("Todavía no hay ninguna firma", "err");
+      cerrar(cv.toDataURL("image/jpeg", 0.8));
+    });
+    const del = $("sDel");
+    if (del) del.addEventListener("click", async () => {
+      if (await ask({ title: "¿Quitar la firma?", ok: "Quitar", cancel: "Cancelar", danger: true })) cerrar("");
+    });
+
+    // Cerrar el modal sin guardar = no se cambia nada.
+    $("modalClose").addEventListener("click", () => resolve(undefined));
+    $("modalRoot").querySelector(".modal").addEventListener("click", (e) => {
+      if (e.target.classList.contains("modal")) resolve(undefined);
+    });
+  });
 }
 
 /* ===========================================================================
@@ -2138,6 +2346,13 @@ function renderSettings() {
       ${admin ? item("users", "people", "Usuarios del sistema") : ""}
     </div>
 
+    ${yaInstalada() ? "" : `
+      <h3>Aplicación</h3>
+      <div class="card">
+        ${item("instalar", "install", "Instalar en el teléfono",
+               promptInstalar ? '<span class="badge admin">listo</span>' : "")}
+      </div>`}
+
     <h3>Cuenta</h3>
     <div class="card">
       ${item("pw", "key", "Cambiar mi contraseña")}
@@ -2157,6 +2372,7 @@ function renderSettings() {
   $("settingsBody").querySelectorAll("[data-act]").forEach((b) => {
     b.addEventListener("click", () => ({
       pick: () => $("siteBtn").click(),
+      instalar: instalarApp,
       brand: brandScreen,
       sites: sitesScreen,
       users: usersScreen,

@@ -25,7 +25,7 @@
 // =============================================================================
 
 import { db, ensureSchema, nowIso } from "../lib/db.js";
-import { readJson, clean, parseId } from "../lib/http.js";
+import { readJson, clean, parseId, parseDataJpeg } from "../lib/http.js";
 import {
   hashPassword, verifyPassword, newToken,
   currentUser, isAdmin, deny, notYours,
@@ -36,18 +36,6 @@ const LOCK_MS = 15 * 60 * 1000;
 const NAME_RE = /^[\p{L}\p{N}._-]{2,20}$/u;
 const SIGNUP_OPEN = process.env.ALLOW_SIGNUP !== "0";   // cerrar con ALLOW_SIGNUP=0
 const MAX_LOGO = 400 * 1024;   // el navegador ya lo achica; esto es el tope duro
-
-// Solo se acepta un data URI de JPEG: es lo que la app genera y lo unico que se
-// puede incrustar directo en un PDF.
-function parseLogo(v) {
-  if (v === null || v === "") return { ok: true, value: null };
-  const s = String(v ?? "");
-  if (!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(s)) {
-    return { ok: false, error: "El logo debe ser una imagen JPEG." };
-  }
-  if (s.length > MAX_LOGO) return { ok: false, error: "El logo es muy pesado. Usa una imagen más chica." };
-  return { ok: true, value: s };
-}
 
 const publicUser = (u) => ({
   id: Number(u.id), name: u.name, fullName: u.fullName,
@@ -234,7 +222,7 @@ export default async function handler(req, res) {
         sets.push("name = ?"); args.push(name);
       }
       if ("logo" in body) {
-        const logo = parseLogo(body.logo);
+        const logo = parseDataJpeg(body.logo, MAX_LOGO, "El logo");
         if (!logo.ok) return res.status(400).json({ error: logo.error });
         sets.push("logo = ?"); args.push(logo.value);
       }

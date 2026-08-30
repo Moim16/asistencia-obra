@@ -6,18 +6,28 @@
 //          Devuelve TODO el personal activo de la obra, con su marca del dia si ya
 //          la tiene (status null = todavia sin marcar).
 //
-//  POST /api/attendance { siteId, day, marks:[{ workerId, status, reason, note }] }
+//  GET  /api/attendance?siteId=&day=&sign=<workerId>
+//       -> la firma de ese trabajador ese dia (imagen), para verla o imprimirla.
+//
+//  POST /api/attendance { siteId, day, marks:[{ workerId, status, reason, note, sign }] }
 //       -> guarda la lista del dia (una marca por trabajador; vuelve a guardar
 //          encima si se corrige). status: 'P' presente, 'M' medio dia, 'A' ausente.
 //          Un status vacio o desconocido BORRA la marca (dejar sin marcar).
+//
+//          `sign` es la firma del trabajador (data URI JPEG). Viaja junto con la
+//          marca y no por separado: asi la cola de "sin conexion" la arrastra
+//          sola, sin plomeria extra. La firma se BORRA si el dia pasa a falta o
+//          queda sin marcar: firmar una ausencia no significa nada.
 //
 //  Cualquier usuario con sesion puede pasar lista; queda registrado en `markedBy`.
 // =============================================================================
 
 import { db, ensureSchema, nowIso, STATUSES } from "../lib/db.js";
-import { readJson, clean, parseDay, parseId } from "../lib/http.js";
+import { readJson, clean, parseDay, parseId, parseDataJpeg } from "../lib/http.js";
 import { currentUser, deny, notYours, canSeeSite } from "../lib/auth.js";
 import { today } from "../lib/day.js";
+
+const MAX_SIGN = 250 * 1024;   // el navegador la manda chica; esto es el tope duro
 
 export default async function handler(req, res) {
   try {
@@ -34,26 +44,42 @@ export default async function handler(req, res) {
       if (!day) return res.status(400).json({ error: "Fecha inválida (usa YYYY-MM-DD)." });
       if (!(await canSeeSite(me, siteId))) return notYours(res);
 
+      // Una firma concreta, pedida a proposito para verla o imprimirla.
+      const signOf = parseId(req.query?.sign);
+      if (signOf) {
+        const rs = await db.execute({
+          sql: `SELECT image, signedAt FROM attendance_signs WHERE workerId = ? AND day = ? AND siteId = ?`,
+          args: [signOf, day, siteId],
+        });
+        if (!rs.rows.length) return res.status(404).json({ error: "Sin firma." });
+        return res.status(200).json({ image: rs.rows[0].image, signedAt: rs.rows[0].signedAt });
+      }
+
       // Personal activo + su marca del dia (LEFT JOIN: los no marcados vienen en null).
       // El JOIN filtra tambien por obra: si un trabajador fue trasladado y ese dia
       // tiene una marca de SU OBRA ANTERIOR, aqui debe salir "sin marcar", igual que
       // en el reporte de esta obra. Si no, la lista y el reporte se contradicen.
+      // `signed` es un booleano, no la imagen: la lista del dia se pide todo el
+      // tiempo y no tiene por que cargar con las firmas.
       const rs = await db.execute({
         sql: `SELECT w.id, w.fullName, w.trade,
                      a.status, a.reason, a.note, a.updatedAt,
-                     u.name AS markedByName
+                     u.name AS markedByName,
+                     (s.workerId IS NOT NULL) AS signed
                 FROM workers w
                 LEFT JOIN attendance a ON a.workerId = w.id AND a.day = ? AND a.siteId = ?
+                LEFT JOIN attendance_signs s ON s.workerId = w.id AND s.day = ? AND s.siteId = ?
                 LEFT JOIN users u ON u.id = a.markedBy
                WHERE w.siteId = ? AND w.active = 1
                ORDER BY w.fullName COLLATE NOCASE`,
-        args: [day, siteId, siteId],
+        args: [day, siteId, day, siteId, siteId],
       });
 
       const workers = rs.rows.map((w) => ({
         id: Number(w.id), fullName: w.fullName, trade: w.trade,
         status: w.status || null, reason: w.reason || null, note: w.note || null,
         updatedAt: w.updatedAt || null, markedByName: w.markedByName || null,
+        signed: !!Number(w.signed),
       }));
       const summary = {
         total: workers.length,
@@ -62,6 +88,8 @@ export default async function handler(req, res) {
         A: workers.filter((w) => w.status === "A").length,
       };
       summary.pending = summary.total - summary.P - summary.M - summary.A;
+      // Cuantos trabajaron y todavia no firman: es lo que hay que ir a buscar.
+      summary.unsigned = workers.filter((w) => (w.status === "P" || w.status === "M") && !w.signed).length;
       return res.status(200).json({ day, siteId, workers, summary });
     }
 
@@ -88,7 +116,7 @@ export default async function handler(req, res) {
 
       const now = nowIso();
       const stmts = [];
-      let saved = 0, cleared = 0;
+      let saved = 0, cleared = 0, signed = 0;
 
       for (const m of marks) {
         const workerId = parseId(m?.workerId);
@@ -96,8 +124,10 @@ export default async function handler(req, res) {
         const status = (m?.status ?? "").toString().toUpperCase();
 
         if (!STATUSES.includes(status)) {
-          // Sin estado valido -> se quita la marca (queda "sin marcar").
+          // Sin estado valido -> se quita la marca (queda "sin marcar") y con ella
+          // la firma: firmar un dia que no se trabajo no significa nada.
           stmts.push({ sql: `DELETE FROM attendance WHERE workerId = ? AND day = ?`, args: [workerId, day] });
+          stmts.push({ sql: `DELETE FROM attendance_signs WHERE workerId = ? AND day = ?`, args: [workerId, day] });
           cleared++;
           continue;
         }
@@ -113,10 +143,32 @@ export default async function handler(req, res) {
           args: [siteId, workerId, day, status, reason, clean(m?.note, 120), me.id, now, now],
         });
         saved++;
+
+        // Firma. Solo tiene sentido si el dia se trabajo: en una falta se borra.
+        if (status === "A") {
+          stmts.push({ sql: `DELETE FROM attendance_signs WHERE workerId = ? AND day = ?`, args: [workerId, day] });
+          continue;
+        }
+        if (!("sign" in (m || {}))) continue;          // no se toca lo que ya hubiera
+        const sign = parseDataJpeg(m.sign, MAX_SIGN, "La firma");
+        if (!sign.ok) return res.status(400).json({ error: sign.error });
+        if (sign.value === null) {
+          stmts.push({ sql: `DELETE FROM attendance_signs WHERE workerId = ? AND day = ?`, args: [workerId, day] });
+        } else {
+          stmts.push({
+            sql: `INSERT INTO attendance_signs (workerId, day, siteId, image, signedAt, signedBy)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                  ON CONFLICT (workerId, day) DO UPDATE SET
+                       siteId = excluded.siteId, image = excluded.image,
+                       signedAt = excluded.signedAt, signedBy = excluded.signedBy`,
+            args: [workerId, day, siteId, sign.value, now, me.id],
+          });
+          signed++;
+        }
       }
 
       if (stmts.length) await db.batch(stmts, "write");
-      return res.status(200).json({ ok: true, saved, cleared, day });
+      return res.status(200).json({ ok: true, saved, cleared, signed, day });
     }
 
     res.setHeader("Allow", "GET, POST");
