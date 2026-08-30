@@ -1489,6 +1489,21 @@ class MiniPdf {
     this.buf.push(`${gray} g ${x.toFixed(2)} ${(this.H - y - h).toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f`);
     return this;
   }
+  // Rectangulo con las esquinas redondeadas, con curvas de Bezier. El 0.5523 es
+  // la constante de siempre para aproximar un cuarto de circulo.
+  roundRect(x, y, w, h, r, gray = 0) {
+    const k = r * 0.5523;
+    const yy = this.H - y - h;                 // el PDF cuenta desde abajo
+    const n = (v) => v.toFixed(2);
+    this.buf.push(
+      `${gray} g ${n(x + r)} ${n(yy)} m ` +
+      `${n(x + w - r)} ${n(yy)} l ${n(x + w - r + k)} ${n(yy)} ${n(x + w)} ${n(yy + r - k)} ${n(x + w)} ${n(yy + r)} c ` +
+      `${n(x + w)} ${n(yy + h - r)} l ${n(x + w)} ${n(yy + h - r + k)} ${n(x + w - r + k)} ${n(yy + h)} ${n(x + w - r)} ${n(yy + h)} c ` +
+      `${n(x + r)} ${n(yy + h)} l ${n(x + r - k)} ${n(yy + h)} ${n(x)} ${n(yy + h - r + k)} ${n(x)} ${n(yy + h - r)} c ` +
+      `${n(x)} ${n(yy + r)} l ${n(x)} ${n(yy + r - k)} ${n(x + r - k)} ${n(yy)} ${n(x + r)} ${n(yy)} c f`
+    );
+    return this;
+  }
 
   blob() {
     const objs = [];
@@ -2140,24 +2155,41 @@ function qrEnPdf(doc, texto, x, y, lado) {
   // Antes se pintaba modulo a modulo y, para que no quedaran hilos blancos entre
   // ellos, cada uno se agrandaba un poco: eso engordaba los modulos oscuros casi
   // un 10% y deformaba las proporciones que el lector usa para ubicarse.
+  //
+  // En papel va todo en NEGRO, no en el degradado de la imagen: una impresora en
+  // blanco y negro convierte el color en gris y baja el contraste justo donde el
+  // lector mas lo necesita.
+  const esFinder = (f, k) =>
+    (f < 7 && k < 7) || (f < 7 && k >= n - 7) || (f >= n - 7 && k < 7);
+
   for (let f = 0; f < n; f++) {
     let c = 0;
     while (c < n) {
-      if (!m[f][c]) { c++; continue; }
+      if (!m[f][c] || esFinder(f, c)) { c++; continue; }
       let fin = c;
-      while (fin + 1 < n && m[f][fin + 1]) fin++;
+      while (fin + 1 < n && m[f][fin + 1] && !esFinder(f, fin + 1)) fin++;
       doc.rect(x + off + c * paso, y + off + f * paso, (fin - c + 1) * paso, paso, 0);
       c = fin + 1;
     }
   }
+
+  // Patrones de busqueda con las esquinas redondeadas, igual que en la imagen.
+  for (const [f0, k0] of [[0, 0], [0, n - 7], [n - 7, 0]]) {
+    const bx = x + off + k0 * paso, by = y + off + f0 * paso;
+    doc.roundRect(bx, by, paso * 7, paso * 7, paso * 1.8, 0);
+    doc.roundRect(bx + paso, by + paso, paso * 5, paso * 5, paso * 1.2, 1);
+    doc.roundRect(bx + paso * 2, by + paso * 2, paso * 3, paso * 3, paso * 0.8, 0);
+  }
 }
 
 // Hoja de carnets para recortar: 2 columnas x 4 filas por pagina.
+// Mismo diseno que el carnet suelto: cabecera oscura con la obra, el QR grande
+// y el codigo tambien en texto por si se borra.
 function carnetsPdf(trabajadores) {
   const doc = new MiniPdf({ logo: logoParaPdf() });
   const obra = S.sites.find((x) => x.id === S.siteId)?.name || "Obra";
-  const ANCHO = 240, ALTO = 150, GAPX = 25, GAPY = 20;
-  const X0 = (595 - (ANCHO * 2 + GAPX)) / 2, Y0 = 60;
+  const ANCHO = 240, ALTO = 168, GAPX = 26, GAPY = 18, BANDA = 44;
+  const X0 = (595 - (ANCHO * 2 + GAPX)) / 2, Y0 = 48;
 
   let i = 0, pag = 1;
   for (const w of trabajadores) {
@@ -2166,22 +2198,30 @@ function carnetsPdf(trabajadores) {
     const cx = X0 + (pos % 2) * (ANCHO + GAPX);
     const cy = Y0 + Math.floor(pos / 2) * (ALTO + GAPY);
 
-    // Marco de la tarjeta, para saber por donde cortar.
+    // Cabecera oscura: la obra es lo primero que se lee.
+    doc.rect(cx, cy, ANCHO, BANDA, 0.1);
+    doc.text(cx + ANCHO / 2, cy + 17, FONT_OK(fitText(S.account?.name || "", 7, ANCHO - 24)),
+             { size: 7, gray: 0.72, align: "center" });
+    doc.text(cx + ANCHO / 2, cy + 33, FONT_OK(fitText(obra, 12, ANCHO - 24)),
+             { size: 12, bold: true, gray: 1, align: "center" });
+
+    // Marco, para saber por donde cortar.
     doc.line(cx, cy, cx + ANCHO, cy, { gray: 0.75 });
     doc.line(cx, cy + ALTO, cx + ANCHO, cy + ALTO, { gray: 0.75 });
     doc.line(cx, cy, cx, cy + ALTO, { gray: 0.75 });
     doc.line(cx + ANCHO, cy, cx + ANCHO, cy + ALTO, { gray: 0.75 });
 
-    qrEnPdf(doc, w.qrCode, cx + 12, cy + 18, 114);
+    qrEnPdf(doc, w.qrCode, cx + 10, cy + BANDA + 6, 104);
 
-    const tx = cx + 138;
-    doc.text(tx, cy + 30, FONT_OK(S.account?.name || ""), { size: 7, gray: 0.5 });
-    doc.text(tx, cy + 48, FONT_OK(fitText(w.fullName, 12, 92)), { size: 12, bold: true });
-    doc.text(tx, cy + 63, FONT_OK(fitText(w.trade || "", 8.5, 92)), { size: 8.5, gray: 0.45 });
-    doc.text(tx, cy + 84, FONT_OK(fitText(obra, 8, 92)), { size: 8, gray: 0.45 });
-    if (w.docId) doc.text(tx, cy + 97, FONT_OK(w.docId), { size: 8, gray: 0.45 });
-    // El codigo tambien en texto: si el QR se borra, se puede teclear.
-    doc.text(tx, cy + 128, w.qrCode.replace(/(.{4})/g, "$1 ").trim(), { size: 7, gray: 0.55 });
+    const tx = cx + 124;
+    doc.text(tx, cy + BANDA + 30, FONT_OK(fitText(w.fullName, 12, ANCHO - 134)), { size: 12, bold: true });
+    doc.text(tx, cy + BANDA + 46, FONT_OK(fitText(w.trade || "", 8.5, ANCHO - 134)), { size: 8.5, gray: 0.45 });
+    if (w.docId) doc.text(tx, cy + BANDA + 62, FONT_OK(w.docId), { size: 8, gray: 0.5 });
+
+    // El codigo en texto: si el QR se borra o el telefono no escanea, se teclea.
+    doc.line(cx + 12, cy + ALTO - 24, cx + ANCHO - 12, cy + ALTO - 24, { gray: 0.88 });
+    doc.text(cx + ANCHO / 2, cy + ALTO - 10, w.qrCode.replace(/(.{4})/g, "$1 ").trim(),
+             { size: 7.5, gray: 0.5, align: "center" });
     i++;
   }
   pdfFooter(doc, pag);
