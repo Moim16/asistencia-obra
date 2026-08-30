@@ -356,6 +356,10 @@ nav.bottom svg { width:21px; height:21px; }
 .guia-lista li, .guia-pasos li { margin-bottom:7px; }
 .guia-lista { list-style:disc; }
 .guia-pasos { list-style:decimal; }
+.guia-img {
+  width:100%; display:block; margin:12px 0 0; border:1px solid var(--line);
+  border-radius:var(--r-sm); background:#fff;
+}
 .guia-nota {
   margin:10px 0 4px; padding:9px 12px; font-size:13.5px; color:var(--muted);
   background:var(--soft); border-left:3px solid var(--line-2); border-radius:0 var(--r-sm) var(--r-sm) 0;
@@ -451,6 +455,11 @@ nav.bottom svg { width:21px; height:21px; }
   .tbl th, .tbl td { padding:11px 5px; }
   .tbl td:first-child { max-width:42vw; }
   h2 { font-size:19px; }
+}
+/* En la tabla de pagos, los dias se sacrifican antes que la plata: en un
+   telefono no caben cinco columnas y "A recibir" quedaba fuera de pantalla. */
+@media (max-width:560px) {
+  .col-dias { display:none; }
 }
 /* Pantallas muy chicas (<=330px): los botones pasan a solo el simbolo. */
 @media (max-width:330px) {
@@ -2680,13 +2689,13 @@ function renderReport(r) {
       </div>
       <div class="scroll-x"><table class="tbl">
         <thead><tr>
-          <th>Trabajador</th><th>Días</th><th>Ganado</th><th>Abonos</th><th>A recibir</th>
+          <th>Trabajador</th><th class="col-dias">Días</th><th>Ganado</th><th>Abonos</th><th>A recibir</th>
         </tr></thead>
         <tbody>
           ${r.rows.map((x) => `
             <tr class="clickable" data-w="${x.workerId}">
               <td class="ellip">${esc(x.fullName)}${x.active ? "" : ' <span class="badge off">baja</span>'}</td>
-              <td>${fmtDays(x.worked)}</td>
+              <td class="col-dias">${fmtDays(x.worked)}</td>
               <td>${money(x.earned)}</td>
               <td style="${x.advances ? "color:var(--half);" : ""}">${x.advances ? "-" + money(x.advances) : "—"}</td>
               <td class="days" style="${
@@ -2696,7 +2705,7 @@ function renderReport(r) {
         </tbody>
         <tfoot><tr>
           <td>Total (${r.rows.length})</td>
-          <td>${fmtDays(r.totals.worked)}</td>
+          <td class="col-dias">${fmtDays(r.totals.worked)}</td>
           <td>${money(r.totals.earned)}</td>
           <td>${r.totals.advances ? "-" + money(r.totals.advances) : "—"}</td>
           <td>${money(r.totals.pending)}</td>
@@ -3133,6 +3142,7 @@ const GUIA = [
   },
   {
     t: "Antes de empezar: preparar la obra",
+    im: ["personal"],
     b: [
       ["pasos", [
         "Entra a Ajustes, luego Obras, y toca Nueva obra. Ponle nombre y dirección.",
@@ -3144,6 +3154,7 @@ const GUIA = [
   },
   {
     t: "Pasar lista todos los días",
+    im: ["lista"],
     b: [
       ["p", "Es lo que vas a hacer a diario, y toma menos de un minuto."],
       ["pasos", [
@@ -3169,6 +3180,7 @@ const GUIA = [
   },
   {
     t: "La firma del trabajador",
+    im: ["firma", "obra"],
     b: [
       ["p", "Sirve para cuando alguien dice después que sí vino un día que no vino. Al marcarlo presente, le pasas el teléfono y firma con el dedo, igual que la planilla de papel."],
       ["p", "Se activa por obra: en Ajustes, Obras, tocas la obra y marcas Pedir firma del trabajador. Así solo la tienen las obras donde de verdad hace falta."],
@@ -3177,6 +3189,7 @@ const GUIA = [
   },
   {
     t: "Los carnets con código",
+    im: ["carnet"],
     b: [
       ["p", "Cada trabajador lleva su tarjeta y tú la escaneas para marcarlo presente. También se activa por obra, en la misma pantalla que la firma."],
       ["pasos", [
@@ -3199,6 +3212,7 @@ const GUIA = [
   },
   {
     t: "Abonos: cuando piden adelanto",
+    im: ["abono"],
     b: [
       ["p", "Si un trabajador pide plata antes del día de pago, lo registras como abono y se le descuenta de lo que le toca cobrar."],
       ["pasos", [
@@ -3211,6 +3225,7 @@ const GUIA = [
   },
   {
     t: "El día de pago",
+    im: ["reporte-pagos", "detalle"],
     b: [
       ["p", "El día de pago es el sábado. En Reporte, pestaña Pagos, ves de cada trabajador cuánto ganó, cuánto se le adelantó y cuánto hay que entregarle."],
       ["pasos", [
@@ -3223,6 +3238,7 @@ const GUIA = [
   },
   {
     t: "Reportes y comprobantes",
+    im: ["reporte-dias"],
     b: [
       ["p", "En Reporte tienes dos pestañas: Días, con la asistencia, y Pagos, con la plata. Arriba eliges el período; por defecto sale la semana que se paga este sábado."],
       ["lista", [
@@ -3233,6 +3249,7 @@ const GUIA = [
   },
   {
     t: "Tenerla como aplicación",
+    im: ["ajustes"],
     b: [
       ["p", "Puedes instalarla en el teléfono para abrirla como cualquier otra app, sin entrar al navegador."],
       ["pasos", [
@@ -3275,12 +3292,17 @@ function guiaScreen() {
           if (tipo === "lista") return `<ul class="guia-lista">${val.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
           return `<ol class="guia-pasos">${val.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>`;
         }).join("")}
+        ${(sec.im || []).map((n) => `<img class="guia-img" src="/guia/${n}.jpg" alt="" loading="lazy">`).join("")}
       </div>`).join("")}
     <div style="height:8px;"></div>
   `);
-  $("gPdf").addEventListener("click", () => {
-    const { blob, name } = manualPdf();
-    download(blob, name);
+  $("gPdf").addEventListener("click", async () => {
+    const b = $("gPdf");
+    b.disabled = true;
+    try {
+      const { blob, name } = await manualPdf();
+      download(blob, name);
+    } finally { b.disabled = false; }
   });
 }
 
@@ -3300,8 +3322,29 @@ function pdfParrafo(doc, texto, x, y, ancho, { size = 10, gray = 0.2, bold = fal
   return y;
 }
 
-function manualPdf() {
+// Trae las capturas de la guia listas para incrustar. Si no hay conexion se
+// devuelve vacio y el PDF sale igual, solo que sin imagenes.
+async function guiaImagenes() {
+  const out = {};
+  const nombres = [...new Set(GUIA.flatMap((s) => s.im || []))];
+  await Promise.all(nombres.map(async (n) => {
+    try {
+      const buf = await fetch(`/guia/${n}.jpg`).then((r) => r.arrayBuffer());
+      let bin = "";
+      const bytes = new Uint8Array(buf);
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      const size = jpegSize(bin);
+      if (size) out[n] = { bin, ...size };
+    } catch { /* sin conexion: se omite esa imagen */ }
+  }));
+  return out;
+}
+
+async function manualPdf() {
+  const capturas = await guiaImagenes();
   const doc = new MiniPdf({ logo: logoParaPdf() });
+  const idxImg = {};
+  for (const [n, im] of Object.entries(capturas)) idxImg[n] = doc.addImage(im);
   const ANCHO = 595 - M * 2;
   let pag = 1;
 
@@ -3361,6 +3404,19 @@ function manualPdf() {
         });
         y += 4;
       }
+    }
+
+    // Las capturas de la seccion, centradas y con su marco.
+    for (const nombre of sec.im || []) {
+      const idx = idxImg[nombre];
+      if (idx === undefined) continue;
+      const im = capturas[nombre];
+      const ancho = 330, alto = Math.round(ancho * im.h / im.w);
+      salto(alto + 20);
+      const x = M + (ANCHO - ancho) / 2;
+      doc.rect(x - 1, y - 1, ancho + 2, alto + 2, 0.85);   // marco fino
+      doc.drawImage(idx, x, y, ancho, alto);
+      y += alto + 16;
     }
   });
   doc.text(595 - M, 842 - 40, `${pag}`, { size: 8, gray: 0.55, align: "right" });

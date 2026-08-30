@@ -10,8 +10,8 @@
 // =============================================================================
 
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
-import { extname, join, normalize } from "node:path";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -40,6 +40,7 @@ const MIME = {
   ".webmanifest": "application/manifest+json; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".pdf": "application/pdf",
+  ".jpg": "image/jpeg",
 };
 
 // Cache de handlers ya importados (un import por endpoint).
@@ -56,6 +57,25 @@ createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const path = decodeURIComponent(url.pathname);
   for (const h of SECURITY_HEADERS) res.setHeader(h.key, h.value);
+
+  /* ------------------------------------------- guardar una captura (dev) --
+     Solo existe en este servidor de desarrollo: lo usa el flujo que arma las
+     imagenes de la guia (el navegador recorta la captura y la manda aqui). En
+     produccion esta ruta no existe: Vercel sirve api/*.js y los estaticos. */
+  if (path === "/__guardar" && req.method === "POST") {
+    const destino = url.searchParams.get("nombre") || "";
+    if (!/^guia\/[a-z0-9-]+\.jpg$/.test(destino)) {
+      return send(res, 400, { error: "Nombre no permitido" });
+    }
+    const trozos = [];
+    for await (const c of req) trozos.push(c);
+    const datos = Buffer.concat(trozos);
+    const salida = join(ROOT, destino);
+    await mkdir(dirname(salida), { recursive: true });
+    await writeFile(salida, datos);
+    console.log(`guardado ${destino}  ${(datos.length / 1024).toFixed(1)} KB`);
+    return send(res, 200, { ok: true, bytes: datos.length });
+  }
 
   /* ------------------------------------------------------------------- API */
   if (path.startsWith("/api/")) {
