@@ -86,6 +86,21 @@ check("la empresa A ve solo SUS 2 obras", r.body.sites.length === 2, JSON.string
 r = await call(sites, { token: B.token });
 check("la empresa B ve solo SU obra", r.body.sites.length === 1 && r.body.sites[0].id === obraB1, JSON.stringify(r.body.sites.map((s) => s.name)));
 
+// La firma se enciende por obra: apagada de fabrica, para no imponerla donde
+// no se usa.
+r = await call(sites, { token: A.token });
+check("la firma viene apagada al crear la obra",
+  r.body.sites.every((x) => x.useSignature === false), JSON.stringify(r.body.sites.map((x) => [x.name, x.useSignature])));
+await call(sites, { method: "PUT", token: A.token, query: { id: obraA1 }, body: { useSignature: true } });
+r = await call(sites, { token: A.token });
+check("se puede encender en una obra sin tocar las otras",
+  r.body.sites.find((x) => x.id === obraA1).useSignature === true &&
+  r.body.sites.find((x) => x.id === obraA2).useSignature === false,
+  JSON.stringify(r.body.sites.map((x) => [x.name, x.useSignature])));
+await call(sites, { method: "PUT", token: A.token, query: { id: obraA1 }, body: { useSignature: false } });
+check("y se puede volver a apagar",
+  (await call(sites, { token: A.token })).body.sites.find((x) => x.id === obraA1).useSignature === false);
+
 check("A no puede editar una obra de B", (await call(sites, { method: "PUT", token: A.token, query: { id: obraB1 }, body: { name: "Hackeada" } })).status === 404);
 check("A no puede cerrar una obra de B", (await call(sites, { method: "DELETE", token: A.token, query: { id: obraB1 } })).status === 404);
 check("A no puede leer el personal de una obra de B", (await call(workers, { token: A.token, query: { siteId: obraB1 } })).status === 404);

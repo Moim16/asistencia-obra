@@ -39,6 +39,7 @@ const MIME = {
   ".png": "image/png",
   ".webmanifest": "application/manifest+json; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".pdf": "application/pdf",
 };
 
 // Cache de handlers ya importados (un import por endpoint).

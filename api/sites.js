@@ -3,7 +3,9 @@
 //
 //  GET    /api/sites[?all=1]   -> obras activas (all=1 incluye las cerradas; admin).
 //  POST   /api/sites           { name, address }        -> crear (admin).
-//  PUT    /api/sites?id=       { name, address, active } -> editar (admin).
+//  PUT    /api/sites?id=       { name, address, active, useSignature } -> editar (admin).
+//
+//  `useSignature` enciende la firma del trabajador al pasar lista, solo en esa obra.
 //  DELETE /api/sites?id=       -> cierra la obra (active = 0). No borra historial.
 // =============================================================================
 
@@ -25,7 +27,7 @@ export default async function handler(req, res) {
       // ademas asignadas a el. Cada una con su conteo de personal activo.
       const scope = siteScope(me);
       const rs = await db.execute({
-        sql: `SELECT s.id, s.name, s.address, s.active, s.createdAt,
+        sql: `SELECT s.id, s.name, s.address, s.active, s.useSignature, s.createdAt,
                      (SELECT COUNT(*) FROM workers w WHERE w.siteId = s.id AND w.active = 1) AS workers
                 FROM sites s
                WHERE ${scope.sql} ${all ? "" : "AND s.active = 1"}
@@ -36,6 +38,7 @@ export default async function handler(req, res) {
         sites: rs.rows.map((s) => ({
           id: Number(s.id), name: s.name, address: s.address,
           active: Number(s.active), workers: Number(s.workers),
+          useSignature: !!Number(s.useSignature),
         })),
       });
     }
@@ -52,7 +55,10 @@ export default async function handler(req, res) {
         args: [name, clean(body.address, 160), me.accountId, nowIso()],
       });
       return res.status(201).json({
-        site: { id: Number(ins.lastInsertRowid), name, address: clean(body.address, 160), active: 1, workers: 0 },
+        site: {
+          id: Number(ins.lastInsertRowid), name, address: clean(body.address, 160),
+          active: 1, workers: 0, useSignature: false,
+        },
       });
     }
 
@@ -69,6 +75,7 @@ export default async function handler(req, res) {
       }
       if ("address" in body) { sets.push("address = ?"); args.push(clean(body.address, 160)); }
       if ("active" in body) { sets.push("active = ?"); args.push(body.active ? 1 : 0); }
+      if ("useSignature" in body) { sets.push("useSignature = ?"); args.push(body.useSignature ? 1 : 0); }
       if (!sets.length) return res.status(400).json({ error: "Nada que actualizar." });
       args.push(id);
       const upd = await db.execute({ sql: `UPDATE sites SET ${sets.join(", ")} WHERE id = ?`, args });

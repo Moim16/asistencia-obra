@@ -778,6 +778,25 @@ function applyTheme(t) {
   document.querySelector('meta[name="theme-color"]').content = dark ? "#0d0d0f" : "#ffffff";
 }
 
+/* -------------------------- arranque sin parpadeo ------------------------
+   Esto corre de forma SINCRONA, antes de que el navegador pinte nada: con una
+   sesion guardada se entra directo. Antes se mostraba la pantalla de entrada y
+   se escondia medio segundo despues, cuando volvia /api/auth, y se veia como un
+   parpadeo. La sesion se valida igual, pero en segundo plano.
+-------------------------------------------------------------------------- */
+if (S.token && S.me) {
+  $("login").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  document.body.classList.remove("no-nav");
+  $("meBtn").textContent = initials(S.me.fullName || S.me.name);
+  // Nombre de la obra desde el cache, para que la cabecera no diga "—".
+  try {
+    const guardadas = JSON.parse(localStorage.getItem("ao_sites") || "[]");
+    const actual = guardadas.find((x) => x.id === S.siteId);
+    if (actual) $("siteName").textContent = actual.name;
+  } catch {}
+}
+
 /* --------------------------------- API ---------------------------------- */
 async function api(path, { method = "GET", body } = {}) {
   let res;
@@ -1112,7 +1131,8 @@ async function loadSites() {
   let sites;
   try {
     ({ sites } = await api("/api/sites"));
-    store.set("ao_sites", sites);            // para poder elegir obra sin red
+    store.set("ao_sites", sites);            // para elegir obra sin red y pintar
+                                             // el nombre al arrancar, sin esperar
   } catch (err) {
     if (!err.offline) throw err;
     sites = store.get("ao_sites", []);
@@ -1156,6 +1176,9 @@ async function setView(v) {
    =========================================================================== */
 const REASONS = ["Falta", "Permiso", "Licencia", "Lluvia", "Feriado", "Accidente"];
 // El medio dia va como "½": ningun icono lo dice tan claro.
+// La firma se pide solo en las obras que la tengan encendida.
+const firmaActiva = () => !!S.sites.find((x) => x.id === S.siteId)?.useSignature;
+
 const MARK_ICON = { P: icon("check"), M: '<span style="font-size:17px; line-height:1;">&#189;</span>', A: icon("cross") };
 const MARK_LABEL = { P: "Presente", M: "Medio", A: "Falta" };
 
@@ -1226,6 +1249,7 @@ function renderDay() {
     `<span class="chip dot bad">${plural(n("A"), "falta", "faltas")}</span>` +
     (pend ? `<span class="chip dot">${pend} sin marcar</span>` : "") +
     ((() => {
+      if (!firmaActiva()) return "";
       const sinFirma = w.filter((x) => (x.status === "P" || x.status === "M") && !(x.signed || x.sign)).length;
       return sinFirma ? `<span class="chip dot half">${sinFirma} sin firmar</span>` : "";
     })()) +
@@ -1252,7 +1276,7 @@ function renderDay() {
         <div class="reasons">
           ${REASONS.map((r) => `<button class="reason ${x.reason === r ? "on" : ""}" data-reason="${esc(r)}">${esc(r)}</button>`).join("")}
         </div>` : ""}
-      ${x.status === "P" || x.status === "M" ? `
+      ${firmaActiva() && (x.status === "P" || x.status === "M") ? `
         <button class="firma ${x.signed || x.sign ? "ok" : ""}" data-sign="${x.id}">
           ${icon(x.signed || x.sign ? "check" : "pen")}${x.signed || x.sign ? "Firmado" : "Firmar"}
         </button>` : ""}
@@ -1401,13 +1425,21 @@ function fitText(str, size, max) {
 }
 
 class MiniPdf {
-  // `logo` = { bin, w, h } con el JPEG crudo. Se incrusta una sola vez y se
-  // referencia desde todas las paginas.
+  // Las imagenes ({ bin, w, h } con el JPEG crudo) se incrustan una sola vez y se
+  // referencian desde cualquier pagina. `logo` es un atajo para la primera.
   constructor({ logo = null } = {}) {
     this.W = 595; this.H = 842;      // A4 en puntos
-    this.logo = logo;
+    this.images = [];
+    this.logoIdx = logo ? this.addImage(logo) : -1;
     this.pages = [];
     this.newPage();
+  }
+
+  // Registra una imagen y devuelve su indice, o -1 si no hay nada que registrar.
+  addImage(img) {
+    if (!img || !img.bin || !img.w || !img.h) return -1;
+    this.images.push(img);
+    return this.images.length - 1;
   }
   newPage() { this.buf = []; this.pages.push(this.buf); return this; }
 
@@ -1427,14 +1459,17 @@ class MiniPdf {
     this.buf.push(`${gray} G ${width} w ${x1.toFixed(2)} ${(this.H - y1).toFixed(2)} m ${x2.toFixed(2)} ${(this.H - y2).toFixed(2)} l S`);
     return this;
   }
-  // Dibuja el logo conservando su proporcion dentro de la caja (w x h).
-  image(x, y, w, h) {
-    if (!this.logo) return this;
-    const escala = Math.min(w / this.logo.w, h / this.logo.h);
-    const iw = this.logo.w * escala, ih = this.logo.h * escala;
-    this.buf.push(`q ${iw.toFixed(2)} 0 0 ${ih.toFixed(2)} ${x.toFixed(2)} ${(this.H - y - ih).toFixed(2)} cm /Im0 Do Q`);
+  // Dibuja una imagen conservando su proporcion dentro de la caja (w x h).
+  drawImage(idx, x, y, w, h) {
+    const img = this.images[idx];
+    if (!img) return this;
+    const escala = Math.min(w / img.w, h / img.h);
+    const iw = img.w * escala, ih = img.h * escala;
+    this.buf.push(`q ${iw.toFixed(2)} 0 0 ${ih.toFixed(2)} ${x.toFixed(2)} ${(this.H - y - ih).toFixed(2)} cm /Im${idx} Do Q`);
     return this;
   }
+  // Atajo para el logo de la empresa.
+  image(x, y, w, h) { return this.drawImage(this.logoIdx, x, y, w, h); }
   rect(x, y, w, h, gray = 0.95) {
     this.buf.push(`${gray} g ${x.toFixed(2)} ${(this.H - y - h).toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f`);
     return this;
@@ -1449,16 +1484,16 @@ class MiniPdf {
     const f1 = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
     const f2 = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
 
-    // El JPEG entra tal cual: DCTDecode es justamente el filtro JPEG del PDF,
+    // Los JPEG entran tal cual: DCTDecode es justamente el filtro JPEG del PDF,
     // asi que no hay que descomprimir ni recodificar nada.
-    let imgN = 0;
-    if (this.logo) {
-      imgN = add(
-        `<< /Type /XObject /Subtype /Image /Width ${this.logo.w} /Height ${this.logo.h} ` +
-        `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${this.logo.bin.length} >>\n` +
-        `stream\n${this.logo.bin}\nendstream`
-      );
-    }
+    const imgNs = this.images.map((im) => add(
+      `<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} ` +
+      `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.bin.length} >>\n` +
+      `stream\n${im.bin}\nendstream`
+    ));
+    const recursoImgs = imgNs.length
+      ? ` /XObject << ${imgNs.map((n, i) => `/Im${i} ${n} 0 R`).join(" ")} >>`
+      : "";
 
     const pageIds = [];
     for (const buf of this.pages) {
@@ -1466,8 +1501,7 @@ class MiniPdf {
       const contN = add(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
       pageIds.push(add(
         `<< /Type /Page /Parent ${pagesN} 0 R /MediaBox [0 0 ${this.W} ${this.H}] ` +
-        `/Resources << /Font << /F1 ${f1} 0 R /F2 ${f2} 0 R >>` +
-        (imgN ? ` /XObject << /Im0 ${imgN} 0 R >>` : "") + ` >> /Contents ${contN} 0 R >>`
+        `/Resources << /Font << /F1 ${f1} 0 R /F2 ${f2} 0 R >>` + recursoImgs + ` >> /Contents ${contN} 0 R >>`
       ));
     }
     objs[catalogN - 1] = `<< /Type /Catalog /Pages ${pagesN} 0 R >>`;
@@ -1557,8 +1591,16 @@ function reportPdf(r) {
 }
 
 // Detalle de un trabajador: lo que trabajo dia a dia y cuanto le toca.
-function workerPdf(row, r, abonos = null) {
+function workerPdf(row, r, abonos = null, firmas = null) {
   const doc = new MiniPdf({ logo: logoParaPdf() });
+
+  // Cada firma se registra una vez y despues se dibuja en la fila de su dia.
+  const idxFirma = {};
+  for (const [dia, uri] of Object.entries(firmas || {})) {
+    const bin = dataUriToBinary(uri);
+    const size = bin && jpegSize(bin);
+    if (size) idxFirma[dia] = doc.addImage({ bin, ...size });
+  }
   const obra = S.sites.find((x) => x.id === S.siteId)?.name || "Obra";
   let y = pdfHeader(doc, FONT_OK(row.fullName), `${FONT_OK(obra)} · del ${r.from} al ${r.to}`);
   let pag = 1;
@@ -1585,12 +1627,15 @@ function workerPdf(row, r, abonos = null) {
   }
 
   const ESTADO = { P: "Presente", M: "Medio día", A: "Falta" };
-  const cols = [M, 330, 440, 595 - M];
+  const hayFirmas = Object.keys(idxFirma).length > 0;
+  // Con firmas, las filas son mas altas para que la firma quepa al lado.
+  const ALTO = hayFirmas ? 32 : 22;
+  const cols = hayFirmas ? [M, 260, 340, 595 - M] : [M, 330, 440, 595 - M];
   const head = () => {
     doc.text(cols[0], y, "FECHA", { size: 7.5, bold: true, gray: 0.45 });
     doc.text(cols[1], y, "ESTADO", { size: 7.5, bold: true, gray: 0.45, align: "right" });
     doc.text(cols[2], y, "MONTO", { size: 7.5, bold: true, gray: 0.45, align: "right" });
-    doc.text(cols[3], y, "PAGADO", { size: 7.5, bold: true, gray: 0.45, align: "right" });
+    doc.text(cols[3], y, hayFirmas ? "FIRMA" : "PAGADO", { size: 7.5, bold: true, gray: 0.45, align: "right" });
     y += 6; doc.line(M, y, 595 - M, y); y += 14;
   };
   head();
@@ -1598,7 +1643,7 @@ function workerPdf(row, r, abonos = null) {
   // Solo los dias con marca: las filas vacias no aportan nada en papel.
   const dias = r.days.filter((d) => row.marks[d]);
   for (const d of dias) {
-    if (y > 842 - 70) {
+    if (y > 842 - 80) {
       pdfFooter(doc, pag++); doc.newPage();
       y = pdfHeader(doc, FONT_OK(row.fullName), `${FONT_OK(obra)} · del ${r.from} al ${r.to}`); head();
     }
@@ -1606,8 +1651,17 @@ function workerPdf(row, r, abonos = null) {
     doc.text(cols[0], y, FONT_OK(prettyDay(d)), { size: 9.5 });
     doc.text(cols[1], y, ESTADO[m.s], { size: 9.5, align: "right", gray: 0.35 });
     doc.text(cols[2], y, money(m.amount), { size: 9.5, align: "right" });
-    doc.text(cols[3], y, m.paid ? "Si" : "-", { size: 9.5, align: "right", gray: 0.45 });
-    y += 8; doc.line(M, y, 595 - M, y, { gray: 0.92 }); y += 14;
+    if (hayFirmas) {
+      if (idxFirma[d] !== undefined) {
+        // La firma se dibuja alineada a la derecha, dentro de su fila.
+        doc.drawImage(idxFirma[d], cols[3] - 92, y - 12, 92, 26);
+      } else {
+        doc.text(cols[3], y, "sin firma", { size: 8.5, align: "right", gray: 0.6 });
+      }
+    } else {
+      doc.text(cols[3], y, m.paid ? "Sí" : "-", { size: 9.5, align: "right", gray: 0.45 });
+    }
+    y += ALTO - 14; doc.line(M, y, 595 - M, y, { gray: 0.92 }); y += 14;
   }
   if (!dias.length) doc.text(M, y, "Sin días marcados en este período.", { size: 9.5, gray: 0.5 });
 
@@ -1993,13 +2047,20 @@ function workerDetail(workerId) {
   // Los abonos se piden al vuelo para que salgan detallados en el PDF; si no hay
   // red, el PDF sale igual con el total que ya trae el reporte.
   const armarPdf = async () => {
-    let abonos = null;
+    let abonos = null, firmas = null;
     try {
       abonos = (await api(
         `/api/advances?siteId=${S.siteId}&workerId=${workerId}&from=${lastReport.from}&to=${lastReport.to}`
       )).advances.filter((a) => !a.settled);
     } catch { /* sin conexion */ }
-    return workerPdf(row, lastReport, abonos);
+    try {
+      // Todas las firmas del periodo en una llamada; el PDF las imprime al lado
+      // de su dia, que es donde sirven como prueba.
+      firmas = (await api(
+        `/api/attendance?siteId=${S.siteId}&signs=${workerId}&from=${lastReport.from}&to=${lastReport.to}`
+      )).signs;
+    } catch { /* sin conexion */ }
+    return workerPdf(row, lastReport, abonos, firmas);
   };
 
   $("pdfWBtn").addEventListener("click", async () => {
@@ -2562,6 +2623,12 @@ function siteForm(s) {
         <label class="row" style="margin-bottom:12px; gap:8px;">
           <input type="checkbox" id="sActive" ${s.active ? "checked" : ""} style="width:20px; height:20px;">
           <span>Obra en curso</span>
+        </label>
+        <label class="row" style="margin-bottom:6px; gap:8px; align-items:flex-start;">
+          <input type="checkbox" id="sSign" ${s.useSignature ? "checked" : ""} style="width:20px; height:20px; margin-top:2px;">
+          <span class="grow">Pedir firma del trabajador
+            <span class="muted" style="display:block;">Al marcarlo presente, firma con el dedo. Queda como evidencia.</span>
+          </span>
         </label>`}
       <div id="sMsg"></div>
       <button class="btn primary wide" type="submit">${isNew ? "Crear" : "Guardar"}</button>
@@ -2571,7 +2638,7 @@ function siteForm(s) {
   $("sForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const body = { name: $("sName").value, address: $("sAddr").value };
-    if (!isNew) body.active = $("sActive").checked;
+    if (!isNew) { body.active = $("sActive").checked; body.useSignature = $("sSign").checked; }
     try {
       const r = await api(isNew ? "/api/sites" : `/api/sites?id=${s.id}`, { method: isNew ? "POST" : "PUT", body });
       await loadSites();
@@ -2770,19 +2837,25 @@ if ("serviceWorker" in navigator) {
 
 (async () => {
   renderSyncBar();
-  if (!S.token) return;
+  if (!S.token || !S.me) return;        // sin sesion guardada se queda el login
+
+  // Se entra YA con lo que hay guardado (la pantalla ya se mostro arriba) y la
+  // sesion se valida despues. Sin red, la app tiene que servir igual: en obra
+  // no se puede depender de que el servidor conteste para poder pasar lista.
+  await start();
+
   try {
     const { me, account } = await api("/api/auth");
     S.me = me; S.account = account || null;
     localStorage.setItem("ao_me", JSON.stringify(me));
     localStorage.setItem("ao_account", JSON.stringify(S.account));
-    await start();
-    syncQueue();                 // por si quedo algo de la ultima vez
+    paintBrand();
+    if (S.view === "settings") renderSettings();
+    syncQueue();                        // por si quedo algo de la ultima vez
   } catch (err) {
-    // Sin red se entra con la sesion guardada: la app tiene que servir en obra
-    // aunque no haya señal. El token se revalida en la primera llamada con red.
-    if (err.offline && S.me) { await start(); return; }
-    logout();
+    // Token vencido o revocado -> a la pantalla de entrada. Sin red no: la
+    // sesion guardada sigue valiendo hasta que se pueda comprobar.
+    if (!err.offline) logout();
   }
 })();
 </script>

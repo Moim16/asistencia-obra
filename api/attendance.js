@@ -9,6 +9,10 @@
 //  GET  /api/attendance?siteId=&day=&sign=<workerId>
 //       -> la firma de ese trabajador ese dia (imagen), para verla o imprimirla.
 //
+//  GET  /api/attendance?siteId=&signs=<workerId>&from=&to=
+//       -> todas sus firmas del periodo, en UNA llamada. Es lo que necesita el
+//          PDF del trabajador: pedirlas dia por dia serian 7 idas y vueltas.
+//
 //  POST /api/attendance { siteId, day, marks:[{ workerId, status, reason, note, sign }] }
 //       -> guarda la lista del dia (una marca por trabajador; vuelve a guardar
 //          encima si se corrige). status: 'P' presente, 'M' medio dia, 'A' ausente.
@@ -41,7 +45,25 @@ export default async function handler(req, res) {
       const siteId = parseId(req.query?.siteId);
       const day = parseDay(req.query?.day);
       if (!siteId) return res.status(400).json({ error: "siteId inválido." });
-      if (!day) return res.status(400).json({ error: "Fecha inválida (usa YYYY-MM-DD)." });
+      if (!day && !req.query?.signs) return res.status(400).json({ error: "Fecha inválida (usa YYYY-MM-DD)." });
+      // Todas las firmas de un trabajador en un rango (para el PDF).
+      const signsOf = parseId(req.query?.signs);
+      if (signsOf) {
+        const from = parseDay(req.query?.from), to = parseDay(req.query?.to);
+        if (!siteId) return res.status(400).json({ error: "siteId inválido." });
+        if (!from || !to) return res.status(400).json({ error: "Fechas inválidas (usa YYYY-MM-DD)." });
+        if (!(await canSeeSite(me, siteId))) return notYours(res);
+        const rs = await db.execute({
+          sql: `SELECT day, image, signedAt FROM attendance_signs
+                 WHERE workerId = ? AND siteId = ? AND day >= ? AND day <= ?
+                 ORDER BY day`,
+          args: [signsOf, siteId, from, to],
+        });
+        return res.status(200).json({
+          signs: Object.fromEntries(rs.rows.map((r) => [r.day, r.image])),
+        });
+      }
+
       if (!(await canSeeSite(me, siteId))) return notYours(res);
 
       // Una firma concreta, pedida a proposito para verla o imprimirla.
