@@ -69,6 +69,10 @@ Detalles que importan:
 
 Los QR se generan **sin librerías** (ver la sección `QR` en `index.html`): la CSP no permite scripts de fuera, y una librería son 40 KB para algo que aquí cabe en 200 líneas. Es versión 1 (21x21), corrección M, modo alfanumérico — la más chica, sin patrón de alineación y con los módulos más grandes, o sea la más fácil de leer en una tarjeta manoseada.
 
+**Cómo comprobar que un código se lee.** En la app: *Personal → trabajador → Carnet con QR → **Probar que se lea***. Genera el código y lo decodifica con el mismo lector que usa la cámara, en el propio teléfono. Es la única prueba que vale de verdad, y funciona en Android (en iPhone no hay lector en el navegador).
+
+> Esa prueba nació de un fallo: el código no se leía y las comprobaciones de escritorio decían que todo estaba bien. La información de formato — los 15 bits que le dicen al lector qué máscara usar — estaba **transpuesta**: lo que va en la columna 8 se escribía en la fila 8. Y la comprobación no lo veía porque leía en las mismas posiciones equivocadas. Ahora `leerFormato` en el script tiene las posiciones de la norma escritas aparte del codificador, y la verificación de verdad corre en el teléfono.
+
 `node scripts/qr-check.mjs` lo verifica sin poder decodificar: comprueba que los síndromes de Reed-Solomon den cero (un cálculo independiente del de codificar), que la información de formato para nivel M y máscara 0 valga exactamente `0x5412` como dice el estándar, que los patrones estén donde deben, y que recorriendo el zigzag al revés se recupere el texto original.
 
 ### Abonos y día de pago

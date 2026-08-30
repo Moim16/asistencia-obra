@@ -2089,25 +2089,31 @@ function qrMatriz(texto) {
   return mejor;
 }
 
-// Escribe los 15 bits de formato en sus dos posiciones.
+// Escribe los 15 bits de formato en sus dos copias.
+//
+// OJO CON LOS EJES. La copia de arriba a la izquierda es una L: los bits 0 a 5
+// van en la COLUMNA 8 (filas 0 a 5) y los bits 9 a 14 en la FILA 8 (columnas 5
+// a 0). Tenerlo al reves deja el codigo ilegible: el lector saca de aqui la
+// mascara, y sin ella no puede deshacerla.
+//
+// La segunda copia es al reves: los bits 0 a 7 en la FILA 8 (columnas N-1 a
+// N-8) y los bits 8 a 14 en la COLUMNA 8 (filas N-7 a N-1). Entre las dos queda
+// la casilla del modulo siempre oscuro, en (N-8, 8).
 function ponerFormato(m, mascara, N) {
   const f = qrFormato(mascara);
-  for (let i = 0; i < 15; i++) {
-    const b = (f >> i) & 1;
-    // Copia junto al patron de arriba a la izquierda.
-    if (i < 6) m[8][i] = b;
-    else if (i === 6) m[8][7] = b;
-    else if (i === 7) m[8][8] = b;
-    else if (i === 8) m[7][8] = b;
-    else m[14 - i][8] = b;
-    // Copia repartida entre los otros dos patrones: los bits 0 a 6 suben por la
-    // columna 8 (filas N-1 a N-7) y del 7 al 14 siguen por la fila 8. OJO: son
-    // SIETE en la columna, no ocho. La casilla que sigue, (N-8, 8), es el modulo
-    // siempre oscuro; meter ahi el bit 7 lo perdia y dejaba en blanco su casilla
-    // real (8, N-8), con lo que la segunda copia quedaba corrupta.
-    if (i < 7) m[N - 1 - i][8] = b;
-    else m[8][N - 15 + i] = b;
-  }
+  const bit = (i) => (f >> i) & 1;
+
+  // Copia 1, junto al patron de arriba a la izquierda.
+  for (let i = 0; i <= 5; i++) m[i][8] = bit(i);
+  m[7][8] = bit(6);
+  m[8][8] = bit(7);
+  m[8][7] = bit(8);
+  for (let i = 9; i < 15; i++) m[8][14 - i] = bit(i);
+
+  // Copia 2, repartida entre los otros dos patrones.
+  for (let i = 0; i < 8; i++) m[8][N - 1 - i] = bit(i);
+  for (let i = 8; i < 15; i++) m[N - 15 + i][8] = bit(i);
+
   m[N - 8][8] = 1;      // el modulo siempre oscuro
 }
 
@@ -2187,10 +2193,91 @@ function carnetsPdf(trabajadores) {
    el telefono y lo muestra al llegar. Es un PNG, que es lo que cualquiera puede
    abrir y reenviar.
 -------------------------------------------------------------------------- */
-async function carnetImagen(w) {
-  const m = qrMatriz(w.qrCode);
+// Dibuja SOLO el QR en un lienzo. Aparte del carnet porque tambien lo usa la
+// prueba de lectura.
+//
+// Los modulos de datos van en degradado y los patrones de busqueda en negro.
+// Los dos colores son OSCUROS a proposito: un lector necesita contraste fuerte
+// contra el blanco, y ademas asi el codigo sigue sirviendo impreso en blanco y
+// negro, donde el color se convierte en gris.
+function qrCanvas(texto, lado, { color = true } = {}) {
+  const m = qrMatriz(texto);
   const n = m.length;
+  const ESC = Math.max(2, Math.floor(lado / (n + 8)));
+  const QR = ESC * (n + 8);
+  const off = ESC * 4;                       // zona de silencio
 
+  const c = document.createElement("canvas");
+  c.width = c.height = QR;
+  const g = c.getContext("2d");
+  g.fillStyle = "#fff";
+  g.fillRect(0, 0, QR, QR);
+
+  const esFinder = (f, k) =>
+    (f < 7 && k < 7) || (f < 7 && k >= n - 7) || (f >= n - 7 && k < 7);
+
+  if (color) {
+    const grad = g.createLinearGradient(off, off, QR - off, QR - off);
+    grad.addColorStop(0, "#1f2937");         // gris azulado
+    grad.addColorStop(1, "#b45309");         // ambar quemado
+    g.fillStyle = grad;
+  } else {
+    g.fillStyle = "#18181b";
+  }
+
+  // Los modulos de datos, por tramos horizontales.
+  for (let f = 0; f < n; f++) {
+    let k = 0;
+    while (k < n) {
+      if (!m[f][k] || esFinder(f, k)) { k++; continue; }
+      let fin = k;
+      while (fin + 1 < n && m[f][fin + 1] && !esFinder(f, fin + 1)) fin++;
+      g.fillRect(off + k * ESC, off + f * ESC, (fin - k + 1) * ESC, ESC);
+      k = fin + 1;
+    }
+  }
+
+  // Los patrones de busqueda, con las esquinas redondeadas: es lo que le da el
+  // aire moderno sin tocar las proporciones que el lector usa para ubicarse.
+  const rr = (x, y, an, al, r) => {
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + an, y, x + an, y + al, r);
+    g.arcTo(x + an, y + al, x, y + al, r);
+    g.arcTo(x, y + al, x, y, r);
+    g.arcTo(x, y, x + an, y, r);
+    g.closePath();
+    g.fill();
+  };
+  for (const [f0, k0] of [[0, 0], [0, n - 7], [n - 7, 0]]) {
+    const bx = off + k0 * ESC, by = off + f0 * ESC;
+    g.fillStyle = "#18181b";
+    rr(bx, by, ESC * 7, ESC * 7, ESC * 1.8);
+    g.fillStyle = "#fff";
+    rr(bx + ESC, by + ESC, ESC * 5, ESC * 5, ESC * 1.2);
+    g.fillStyle = "#18181b";
+    rr(bx + ESC * 2, by + ESC * 2, ESC * 3, ESC * 3, ESC * 0.8);
+  }
+  return c;
+}
+
+// Comprueba, EN ESTE TELEFONO, que el codigo generado se pueda leer de verdad.
+// Es la unica prueba que vale: se genera y se decodifica con el mismo lector que
+// usa la camara.
+async function probarLectura(codigo) {
+  if (!("BarcodeDetector" in window)) return { soportado: false };
+  try {
+    const c = qrCanvas(codigo, 620);
+    const det = new BarcodeDetector({ formats: ["qr_code"] });
+    const encontrados = await det.detect(c);
+    const leido = encontrados[0]?.rawValue || null;
+    return { soportado: true, leido, ok: leido === codigo };
+  } catch (err) {
+    return { soportado: true, leido: null, ok: false, error: String(err.message || err) };
+  }
+}
+
+async function carnetImagen(w) {
   // Tarjeta vertical: es lo que mejor se ve al mandarla por WhatsApp.
   const W = 680, H = 980;
   const BANDA = 190;                       // cabecera oscura con la obra
@@ -2217,59 +2304,16 @@ async function carnetImagen(w) {
   g.fillStyle = "#fff";
   g.font = '600 44px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
   g.fillText(recorta(obra, W - 70, 44, "600"), W / 2, 118);
-  g.fillStyle = "#e8720c";                 // una linea de color, para reconocerla de lejos
+  g.fillStyle = "#e8720c";
   g.fillRect(W / 2 - 60, 148, 120, 5);
 
   /* --- el QR --- */
-  const LADO = 420;
-  const ESC = Math.floor(LADO / (n + 8));
-  const QR = ESC * (n + 8);
-  const qx = Math.round((W - QR) / 2), qy = BANDA + 46;
-  const off = ESC * 4;
-
-  g.fillStyle = "#fff"; g.fillRect(qx, qy, QR, QR);   // zona de silencio
-  g.fillStyle = "#18181b";
-
-  // Los tres patrones de busqueda se dibujan aparte, con las esquinas
-  // redondeadas: es lo que le da el aire moderno sin tocar las proporciones que
-  // el lector usa para ubicarse. Los modulos de datos siguen cuadrados, que es
-  // lo que mejor se lee.
-  const esFinder = (f, k) =>
-    (f < 7 && k < 7) || (f < 7 && k >= n - 7) || (f >= n - 7 && k < 7);
-
-  for (let f = 0; f < n; f++) {
-    let k = 0;
-    while (k < n) {
-      if (!m[f][k] || esFinder(f, k)) { k++; continue; }
-      let fin = k;
-      while (fin + 1 < n && m[f][fin + 1] && !esFinder(f, fin + 1)) fin++;
-      g.fillRect(qx + off + k * ESC, qy + off + f * ESC, (fin - k + 1) * ESC, ESC);
-      k = fin + 1;
-    }
-  }
-
-  const rr = (x, y, an, al, r) => {
-    g.beginPath();
-    g.moveTo(x + r, y);
-    g.arcTo(x + an, y, x + an, y + al, r);
-    g.arcTo(x + an, y + al, x, y + al, r);
-    g.arcTo(x, y + al, x, y, r);
-    g.arcTo(x, y, x + an, y, r);
-    g.closePath();
-    g.fill();
-  };
-  for (const [f0, k0] of [[0, 0], [0, n - 7], [n - 7, 0]]) {
-    const bx = qx + off + k0 * ESC, by = qy + off + f0 * ESC;
-    g.fillStyle = "#18181b";
-    rr(bx, by, ESC * 7, ESC * 7, ESC * 2);         // anillo exterior
-    g.fillStyle = "#fff";
-    rr(bx + ESC, by + ESC, ESC * 5, ESC * 5, ESC * 1.4);
-    g.fillStyle = "#18181b";
-    rr(bx + ESC * 2, by + ESC * 2, ESC * 3, ESC * 3, ESC * 0.9);
-  }
+  const qr = qrCanvas(w.qrCode, 440);
+  const qx = Math.round((W - qr.width) / 2), qy = BANDA + 40;
+  g.drawImage(qr, qx, qy);
 
   /* --- quien es --- */
-  let y = qy + QR + 62;
+  let y = qy + qr.height + 58;
   g.fillStyle = "#18181b";
   g.font = '600 46px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
   g.fillText(recorta(w.fullName, W - 60, 46, "600"), W / 2, y);
@@ -2324,10 +2368,30 @@ async function carnetScreen(w) {
       <button class="btn grow" id="cQr">${icon("whatsapp")}Enviar</button>
       <button class="btn grow" id="cDl">${icon("download")}Descargar</button>
     </div>
+    <button class="btn wide" id="cTest" style="margin-top:8px;">${icon("scan")}Probar que se lea</button>
+    <div id="cTestMsg"></div>
     <button class="btn danger wide" id="cNuevo" style="margin-top:8px;">Renovar carnet (el actual deja de servir)</button>
   `);
 
   $("cDl").addEventListener("click", () => download(blob, name));
+
+  // Prueba de verdad: se genera el codigo y se decodifica con el MISMO lector
+  // que usa la camara, aqui mismo. Si dice que si, el carnet sirve.
+  $("cTest").addEventListener("click", async () => {
+    $("cTestMsg").innerHTML = `<div class="msg">Comprobando…</div>`;
+    const r = await probarLectura(datos.qrCode);
+    if (!r.soportado) {
+      $("cTestMsg").innerHTML = `<div class="msg err">Este teléfono no trae lector de códigos
+        (pasa en iPhone). Pruébalo desde un Android.</div>`;
+    } else if (r.ok) {
+      $("cTestMsg").innerHTML = `<div class="msg ok">El código se lee correctamente:
+        <b>${esc(r.leido)}</b></div>`;
+    } else {
+      $("cTestMsg").innerHTML = `<div class="msg err">No se pudo leer el código.
+        ${r.leido ? "Se leyó <b>" + esc(r.leido) + "</b>, que no coincide." : ""}
+        ${r.error ? esc(r.error) : ""}</div>`;
+    }
+  });
   $("cQr").addEventListener("click", async () => {
     const file = new File([blob], name, { type: "image/png" });
     if (navigator.canShare?.({ files: [file] })) {

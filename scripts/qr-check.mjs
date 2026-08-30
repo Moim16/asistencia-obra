@@ -124,18 +124,21 @@ check("modulo siempre oscuro en (13,8)", m[13][8] === 1);
    validas. Esto es lo que faltaba antes: se comprobaba el VALOR del formato pero
    no DONDE quedaba escrito, y por eso paso desapercibido que la segunda copia
    estaba corrupta. */
+// Posiciones segun la norma, escritas aqui a proposito y NO derivadas del
+// codificador: si el codificador se desvia, esto falla. Es justo lo que faltaba
+// cuando los codigos no se leian.
 function leerFormato(m, N) {
-  const copia1 = [];
-  for (let i = 0; i < 6; i++) copia1.push(m[8][i]);
-  copia1.push(m[8][7], m[8][8], m[7][8]);
-  for (let i = 9; i < 15; i++) copia1.push(m[14 - i][8]);
+  const c1 = [];
+  for (let i = 0; i <= 5; i++) c1.push(m[i][8]);      // columna 8, filas 0-5
+  c1.push(m[7][8], m[8][8], m[8][7]);                 // bits 6, 7 y 8
+  for (let i = 9; i < 15; i++) c1.push(m[8][14 - i]); // fila 8, columnas 5-0
 
-  const copia2 = [];
-  for (let i = 0; i < 7; i++) copia2.push(m[N - 1 - i][8]);
-  for (let i = 7; i < 15; i++) copia2.push(m[8][N - 15 + i]);
+  const c2 = [];
+  for (let i = 0; i < 8; i++) c2.push(m[8][N - 1 - i]);      // fila 8, derecha
+  for (let i = 8; i < 15; i++) c2.push(m[N - 15 + i][8]);    // columna 8, abajo
 
   const aNum = (bits) => bits.reduce((acc, b, i) => acc | (b << i), 0);
-  return { c1: aNum(copia1), c2: aNum(copia2) };
+  return { c1: aNum(c1), c2: aNum(c2) };
 }
 
 // Valida los 15 bits: al dividir por el generador BCH el resto debe ser cero.
