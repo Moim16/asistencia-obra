@@ -229,6 +229,49 @@ check("otra empresa no ve el historial de jornales", (await call(workers, { toke
 check("el capataz no fija jornales", (await call(workers, { method: "POST", query: { rates: "1" }, token: F.token, body: { workerId: juan, amount: 1, fromDay: day(0) } })).status === 403);
 
 /* ========================================================================== */
+section("Carnet con QR");
+
+r = await call(sites, { token: A.token });
+check("el escaneo viene apagado al crear la obra", r.body.sites.every((x) => x.useQr === false));
+await call(sites, { method: "PUT", token: A.token, query: { id: obraA1 }, body: { useQr: true } });
+check("se puede encender por obra",
+  (await call(sites, { token: A.token })).body.sites.find((x) => x.id === obraA1).useQr === true);
+
+r = await call(workers, { token: A.token, query: { siteId: obraA1, qr: "1", today: day(0) } });
+const conCodigo = r.body.workers.filter((w) => w.qrCode);
+check("cada trabajador nace con su codigo", conCodigo.length === r.body.workers.length,
+  JSON.stringify(r.body.workers.map((w) => [w.fullName, w.qrCode])));
+check("el codigo es de 16 caracteres del alfabeto del QR",
+  conCodigo.every((w) => /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{16}$/.test(w.qrCode)),
+  JSON.stringify(conCodigo.map((w) => w.qrCode)));
+check("no hay codigos repetidos", new Set(conCodigo.map((w) => w.qrCode)).size === conCodigo.length);
+
+// Sin ?qr=1 el codigo no viaja: no hace falta en la pantalla de personal.
+check("sin pedirlo, el codigo no viene en la lista",
+  (await call(workers, { token: A.token, query: { siteId: obraA1 } })).body.workers.every((w) => !("qrCode" in w)));
+
+// La lista del dia SI lo trae, para poder escanear sin conexion.
+r = await call(attendance, { token: A.token, query: { siteId: obraA1, day: day(0) } });
+check("la lista del dia trae el codigo (para escanear sin señal)",
+  r.body.workers.every((w) => typeof w.qrCode === "string" && w.qrCode.length === 16),
+  JSON.stringify(r.body.workers.map((w) => [w.fullName, w.qrCode])));
+
+// Carnet perdido: se renueva y el viejo deja de valer.
+const codigoViejo = conCodigo[0].qrCode;
+r = await call(workers, { method: "POST", query: { qr: "1" }, token: A.token, body: { workerId: conCodigo[0].id } });
+check("se puede renovar el carnet", r.status === 200 && r.body.qrCode !== codigoViejo, JSON.stringify(r.body));
+r = await call(workers, { token: A.token, query: { siteId: obraA1, qr: "1", today: day(0) } });
+check("el codigo viejo ya no aparece",
+  !r.body.workers.some((w) => w.qrCode === codigoViejo));
+
+check("el capataz no renueva carnets",
+  (await call(workers, { method: "POST", query: { qr: "1" }, token: F.token, body: { workerId: conCodigo[0].id } })).status === 403);
+check("otra empresa no renueva mis carnets",
+  (await call(workers, { method: "POST", query: { qr: "1" }, token: B.token, body: { workerId: conCodigo[0].id } })).status === 404);
+
+await call(sites, { method: "PUT", token: A.token, query: { id: obraA1 }, body: { useQr: false } });
+
+/* ========================================================================== */
 section("Asistencia");
 
 r = await call(attendance, { token: A.token, query: { siteId: obraA1, day: day(0) } });

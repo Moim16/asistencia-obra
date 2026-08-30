@@ -37,17 +37,34 @@ Cada trabajador tiene su **pago por día completo**, y **medio día paga la mita
 
 > **El primer monto cubre hacia atrás.** Si un día es anterior a la primera tarifa registrada, se paga igual con esa primera tarifa. Lo normal es marcar días y recién después cargar cuánto gana la persona; sin esta regla esos días quedarían en cero. Los cambios **programados hacia adelante** sí valen solo desde su fecha.
 
-### Firma del trabajador
+### Evidencia de asistencia
 
-Al marcar a alguien **Presente** o **Medio día** aparece un botón **Firmar**: se le pasa el teléfono y firma con el dedo, igual que la planilla de papel. Sirve como evidencia cuando después alguien dice que sí vino un día que no vino.
+Dos mecanismos, **cada uno se enciende por obra** desde *Ajustes → Obras → editar*. Vienen apagados: solo los tiene quien los pide.
 
-Es **opcional**: se puede guardar el día sin firma, y el resumen avisa cuántos trabajaron y todavía no firman, para saber a quién hay que buscar.
+**Firma del trabajador.** Al marcar a alguien Presente o Medio día aparece un botón **Firmar**: se le pasa el teléfono y firma con el dedo, igual que la planilla de papel. La firma sale impresa en el PDF del trabajador, junto a su día.
+
+**Carnet con QR.** Cada trabajador lleva su tarjeta impresa y el capataz la escanea para marcarlo presente. Los carnets se generan desde *Personal → Carnets*: una hoja con 8 por página, con el nombre, el oficio, la obra y el código también en texto por si el QR se borra.
+
+Prueban cosas distintas: el carnet, que la tarjeta estuvo ahí; la firma, que la persona hizo un gesto en el momento. Juntos son sólidos; el carnet solo no distingue si alguien le prestó la tarjeta a un compañero.
+
+Los dos son **opcionales por día**: se puede guardar sin ellos, y el resumen avisa cuántos trabajaron y todavía no firman.
 
 La firma se borra sola si el día pasa a **falta** o queda **sin marcar** — firmar una ausencia no significa nada.
 
-> **La huella dactilar no se puede hacer desde una app web.** El navegador no da acceso al sensor para leer la huella de otra persona; lo único que existe (WebAuthn) autentica al dueño del teléfono, así que probaría que el capataz estaba ahí, no el trabajador. Para huellas de verdad harían falta lectores físicos y una app nativa.
+> **La huella dactilar no se puede hacer desde una app web.** El navegador no da acceso al sensor para leer la huella de otra persona; lo único que existe (WebAuthn) autentica al dueño del teléfono, así que probaría que el capataz estaba ahí, no el trabajador. Además solo funcionan las huellas registradas en los ajustes del teléfono (unas 5 en Android), y quien registre la suya podría desbloquear todo el equipo. Para huellas de verdad harían falta lectores físicos y una app nativa.
 
-La firma viaja **junto con la marca** en el mismo `POST`, no en una llamada aparte: así la cola de "sin conexión" la arrastra sola. Y la lista del día devuelve solo un booleano `signed`, nunca las imágenes — se piden aparte cuando hay que verlas.
+Detalles que importan:
+
+- La firma viaja **junto con la marca** en el mismo `POST`, no en una llamada aparte: así la cola de "sin conexión" la arrastra sola.
+- La lista del día devuelve solo un booleano `signed`, nunca las imágenes — se piden aparte cuando hay que verlas.
+- El escaneo se resuelve **contra la lista que ya está en pantalla**, sin consultar al servidor: en obra no se puede depender de la red por cada carnet. Por eso el código viaja con la lista del día. No es un secreto: quien pasa lista ya puede marcar a mano a quien quiera.
+- El escáner usa `BarcodeDetector`, que existe en **Chrome de Android** pero no en iPhone. Donde no está, se escribe el código a mano.
+
+#### El codificador de QR
+
+Los QR se generan **sin librerías** (ver la sección `QR` en `index.html`): la CSP no permite scripts de fuera, y una librería son 40 KB para algo que aquí cabe en 200 líneas. Es versión 1 (21x21), corrección M, modo alfanumérico — la más chica, sin patrón de alineación y con los módulos más grandes, o sea la más fácil de leer en una tarjeta manoseada.
+
+`node scripts/qr-check.mjs` lo verifica sin poder decodificar: comprueba que los síndromes de Reed-Solomon den cero (un cálculo independiente del de codificar), que la información de formato para nivel M y máscara 0 valga exactamente `0x5412` como dice el estándar, que los patrones estén donde deben, y que recorriendo el zigzag al revés se recupere el texto original.
 
 ### Abonos y día de pago
 
@@ -130,6 +147,7 @@ Igual que `marcador-vivo`, sin build ni framework:
 | `api/sites.js` | Obras |
 | `api/workers.js` | Personal y pago por día (con historial) |
 | `api/attendance.js` | Pasar lista de un día (leer y guardar), con la firma |
+| `api/workers.js` | ...y el código del carnet de cada trabajador |
 | `api/report.js` | Días trabajados y montos por período |
 | `api/payments.js` | Marcar días como pagados (y deshacer), descontando abonos |
 | `api/advances.js` | Abonos: registrar, listar y quitar |
@@ -140,8 +158,8 @@ Igual que `marcador-vivo`, sin build ni framework:
 accounts      empresas (el cerco duro: nadie ve fuera de la suya) + logo
 users         quienes entran a la app (admin / capataz)
 site_users    qué obras ve cada capataz
-sites         obras
-workers       albañiles (pertenecen a una obra)
+sites         obras (useSignature / useQr: la evidencia se activa por obra)
+workers       albañiles (pertenecen a una obra) + qrCode del carnet
 worker_rates  pago por día del trabajador, vigente DESDE una fecha
 attendance    una fila por trabajador y día  ->  UNIQUE (workerId, day)
               paidAt / paidAmount = pago, con el monto congelado
@@ -176,7 +194,7 @@ node scripts/smoke.mjs           # corre y borra los datos de prueba
 node scripts/smoke.mjs --keep    # deja datos para mirar la app (jefe / obra1234)
 ```
 
-116 pruebas contra los handlers reales, sin levantar servidor. Requiere base **vacía**. Cubren, entre otras cosas, que una empresa no pueda tocar los datos de otra, que un capataz solo vea sus obras, que cada día se pague al monto que regía ese día, que subir el pago no reescriba lo ya pagado, que los días marcados antes de cargar el pago igual se paguen, que los abonos se descuenten y se devuelvan bien al deshacer un pago, y que la firma se borre al marcar falta o desmarcar el día.
+130 pruebas contra los handlers reales, sin levantar servidor. Requiere base **vacía**. Cubren, entre otras cosas, que una empresa no pueda tocar los datos de otra, que un capataz solo vea sus obras, que cada día se pague al monto que regía ese día, que subir el pago no reescriba lo ya pagado, que los días marcados antes de cargar el pago igual se paguen, que los abonos se descuenten y se devuelvan bien al deshacer un pago, que la firma se borre al marcar falta o desmarcar el día, y que los carnets sean únicos y se puedan renovar.
 
 ---
 
@@ -220,4 +238,5 @@ node scripts/smoke.mjs --keep    # deja datos para mirar la app (jefe / obra1234
 2. **Feriados.** Marcar un día como no laborable para toda la obra de una vez, en lugar de trabajador por trabajador.
 4. **Recuperar contraseña.** Hoy solo el admin puede resetear la de un capataz; si el admin pierde la suya, hay que tocar la base a mano.
 5. **Firma al recibir el pago.** Hoy se firma la asistencia diaria; falta que firme el sábado sobre el detalle, como comprobante de que recibió la plata.
-6. **Ver la firma desde el reporte.** Se guarda y se puede consultar desde la lista del día, pero todavía no sale en el PDF ni se puede abrir desde el reporte del período.
+6. **Escanear en iPhone.** `BarcodeDetector` no existe en Safari; ahí hay que escribir el código del carnet a mano. Se podría resolver con un decodificador propio, pero es bastante más código que el codificador.
+7. **Foto como evidencia.** Una foto grupal diaria de la cuadrilla sería la prueba más difícil de discutir, y cuesta un solo gesto para todos.

@@ -16,9 +16,16 @@
 //                                         -> fija el jornal DESDE fromDay (admin).
 //                                            Repetir el mismo fromDay lo corrige.
 //  DELETE /api/workers?rate=<rateId>      -> borra una tarifa del historial (admin).
+//
+//  Carnet:
+//  GET    /api/workers?siteId=&qr=1       -> incluye el codigo del carnet de cada
+//                                            uno, para imprimirlos y para poder
+//                                            escanear SIN CONEXION.
+//  POST   /api/workers?qr=1 { workerId }  -> le da un codigo nuevo (carnet perdido:
+//                                            el viejo deja de servir).
 // =============================================================================
 
-import { db, ensureSchema, nowIso } from "../lib/db.js";
+import { db, ensureSchema, nowIso, newQrCode } from "../lib/db.js";
 import { readJson, clean, parseId, parseDay } from "../lib/http.js";
 import { currentUser, isAdmin, deny, notYours, canSeeSite, canSeeWorker } from "../lib/auth.js";
 import { today } from "../lib/day.js";
@@ -67,11 +74,12 @@ export default async function handler(req, res) {
       if (!siteId) return res.status(400).json({ error: "siteId inválido." });
       if (!(await canSeeSite(me, siteId))) return notYours(res);
       const all = !!req.query?.all;
+      const conQr = !!req.query?.qr;
       // `dailyRate` = jornal que rige HOY; `nextRateFrom` avisa si hay un cambio
       // de jornal ya programado hacia adelante.
       const hoy = localDay(req.query?.today);
       const rs = await db.execute({
-        sql: `SELECT w.id, w.siteId, w.fullName, w.docId, w.trade, w.phone, w.active,
+        sql: `SELECT w.id, w.siteId, w.fullName, w.docId, w.trade, w.phone, w.active, w.qrCode,
                      COALESCE(
                        (SELECT r.amount FROM worker_rates r
                          WHERE r.workerId = w.id AND r.fromDay <= ?
@@ -91,11 +99,22 @@ export default async function handler(req, res) {
           ...row(w),
           dailyRate: w.dailyRate == null ? null : Number(w.dailyRate),
           nextRateFrom: w.nextRateFrom || null,
+          ...(conQr ? { qrCode: w.qrCode } : {}),
         })),
       });
     }
 
     if (!isAdmin(me)) return deny(res, true);
+
+    /* -------------------------------------------- POST renovar el carnet --- */
+    if (req.method === "POST" && req.query?.qr) {
+      const workerId = parseId(body.workerId);
+      if (!workerId) return res.status(400).json({ error: "Trabajador inválido." });
+      if (!(await canSeeWorker(me, workerId))) return notYours(res);
+      const code = newQrCode();
+      await db.execute({ sql: `UPDATE workers SET qrCode = ? WHERE id = ?`, args: [code, workerId] });
+      return res.status(200).json({ ok: true, qrCode: code });
+    }
 
     /* ------------------------------------------------- POST fijar un jornal */
     if (req.method === "POST" && req.query?.rates) {
@@ -124,9 +143,10 @@ export default async function handler(req, res) {
       if (!fullName) return res.status(400).json({ error: "El nombre del trabajador es obligatorio." });
       if (!(await canSeeSite(me, siteId))) return notYours(res);
 
-      const args = [siteId, fullName, clean(body.docId, 30), clean(body.trade, 40), clean(body.phone, 30), nowIso()];
+      const args = [siteId, fullName, clean(body.docId, 30), clean(body.trade, 40), clean(body.phone, 30), nowIso(), newQrCode()];
       const ins = await db.execute({
-        sql: `INSERT INTO workers (siteId, fullName, docId, trade, phone, createdAt) VALUES (?, ?, ?, ?, ?, ?)`,
+        sql: `INSERT INTO workers (siteId, fullName, docId, trade, phone, createdAt, qrCode)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
         args,
       });
       const workerId = Number(ins.lastInsertRowid);

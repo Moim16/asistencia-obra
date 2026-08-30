@@ -85,6 +85,7 @@ export default async function handler(req, res) {
       // tiempo y no tiene por que cargar con las firmas.
       const rs = await db.execute({
         sql: `SELECT w.id, w.fullName, w.trade,
+                     w.qrCode,
                      a.status, a.reason, a.note, a.updatedAt,
                      u.name AS markedByName,
                      (s.workerId IS NOT NULL) AS signed
@@ -99,6 +100,11 @@ export default async function handler(req, res) {
 
       const workers = rs.rows.map((w) => ({
         id: Number(w.id), fullName: w.fullName, trade: w.trade,
+        // El codigo del carnet viaja con la lista para poder escanear SIN
+        // CONEXION: en obra no se puede depender de consultar al servidor por
+        // cada escaneo. No es un secreto: quien pasa lista ya puede marcar a
+        // mano a quien quiera, asi que tenerlo no le da ningun poder extra.
+        qrCode: w.qrCode || null,
         status: w.status || null, reason: w.reason || null, note: w.note || null,
         updatedAt: w.updatedAt || null, markedByName: w.markedByName || null,
         signed: !!Number(w.signed),

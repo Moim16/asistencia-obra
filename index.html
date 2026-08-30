@@ -275,6 +275,15 @@ h3 { font-size:11px; font-weight:600; margin:22px 0 8px; color:var(--faint); tex
 }
 .savebar .inner { max-width:640px; margin:0 auto; }
 
+/* --------------------------------------------------------------- QR ----- */
+.scan-box { position:relative; background:#000; border-radius:var(--r); overflow:hidden; }
+.scan-box video { width:100%; display:block; max-height:60vh; object-fit:cover; }
+.scan-mira {
+  position:absolute; inset:14% 12%; border:2px solid rgba(255,255,255,.85);
+  border-radius:12px; box-shadow:0 0 0 100vmax rgba(0,0,0,.35);
+}
+.scan-log { max-height:150px; overflow-y:auto; }
+
 /* --------------------------------------------------------------- firma --
    El trabajador firma con el dedo, igual que la planilla de papel. */
 .sign-pad {
@@ -503,6 +512,7 @@ nav.bottom svg { width:21px; height:21px; }
 
       <div class="chips" id="summary"></div>
 
+      <button class="btn primary wide hidden" id="scanBtn" style="margin-bottom:10px;"></button>
       <div class="row" style="margin-bottom:10px; gap:8px;">
         <button class="btn sm grow" id="allPresent">Todos presentes</button>
         <button class="btn sm grow" id="clearAll">Limpiar día</button>
@@ -532,6 +542,7 @@ nav.bottom svg { width:21px; height:21px; }
     <section id="viewStaff" class="hidden">
       <div class="row" style="margin:18px 0 10px;">
         <h2 class="grow" style="margin:0;">Personal</h2>
+        <button class="btn sm hidden" id="cardsBtn"></button>
         <button class="btn sm primary hidden" id="addWorker"></button>
       </div>
       <div class="card" id="staffList"></div>
@@ -738,6 +749,8 @@ const ICONS = {
   info:      '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.1"/>',
   calendar:  '<rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/>',
   install:   '<path d="M12 3v11M8 10.5l4 4 4-4"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
+  scan:      '<path d="M3 8V5.5A2.5 2.5 0 0 1 5.5 3H8M16 3h2.5A2.5 2.5 0 0 1 21 5.5V8M21 16v2.5a2.5 2.5 0 0 1-2.5 2.5H16M8 21H5.5A2.5 2.5 0 0 1 3 18.5V16"/><path d="M3 12h18"/>',
+  card:      '<rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M2.5 9.5h19M6.5 14h4M14.5 14h3"/>',
   pen:       '<path d="M3 20.5h4L18 9.5a2.3 2.3 0 0 0-3.3-3.3L3.5 17.3v3.2z"/><path d="M13.5 7.5l3 3"/>',
   image:     '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="8.5" cy="10" r="1.8"/><path d="M3.5 17l4.5-4.5 3.5 3.5 3-3 6 6"/>',
   whatsapp:  '<path d="M3.5 20.5l1.3-4.6a8.2 8.2 0 1 1 3.1 3l-4.4 1.6z"/><path d="M9 9.2c.2 1 .7 2 1.5 2.8s1.8 1.3 2.8 1.5l.9-1.2 1.9.8c-.2 1-1.1 1.6-2.1 1.5a7.4 7.4 0 0 1-6.1-6.1c-.1-1 .5-1.9 1.5-2.1l.8 1.9-1.2.9z"/>',
@@ -1178,6 +1191,7 @@ const REASONS = ["Falta", "Permiso", "Licencia", "Lluvia", "Feriado", "Accidente
 // El medio dia va como "½": ningun icono lo dice tan claro.
 // La firma se pide solo en las obras que la tengan encendida.
 const firmaActiva = () => !!S.sites.find((x) => x.id === S.siteId)?.useSignature;
+const qrActivo = () => !!S.sites.find((x) => x.id === S.siteId)?.useQr;
 
 const MARK_ICON = { P: icon("check"), M: '<span style="font-size:17px; line-height:1;">&#189;</span>', A: icon("cross") };
 const MARK_LABEL = { P: "Presente", M: "Medio", A: "Falta" };
@@ -1282,6 +1296,7 @@ function renderDay() {
         </button>` : ""}
     </div>`).join("");
 
+  $("scanBtn").classList.toggle("hidden", !qrActivo());
   $("saveBar").classList.toggle("hidden", !S.dirty.size || S.view !== "list");
   $("saveBtn").textContent = S.dirty.size ? `Guardar lista (${S.dirty.size})` : "Guardar lista";
 }
@@ -1527,7 +1542,15 @@ class MiniPdf {
 
 /* --------------------------- armado de reportes -------------------------- */
 const M = 45;                 // margen
-const FONT_OK = (t) => String(t ?? "").replace(/[^\x20-\xFF]/g, "?");   // fuera de WinAnsi
+// WinAnsi no tiene puntos suspensivos ni comillas tipograficas: se cambian por
+// su equivalente de siempre antes de descartar lo que no entre. Si no, un nombre
+// recortado terminaba en "?" en el PDF.
+const FONT_OK = (t) => String(t ?? "")
+  .replace(/\u2026/g, "...")
+  .replace(/[\u2018\u2019]/g, "'")
+  .replace(/[\u201C\u201D]/g, '"')
+  .replace(/[\u2013\u2014]/g, "-")
+  .replace(/[^\x20-\xFF]/g, "?");
 
 // Encabezado comun: logo, empresa, obra y periodo.
 function pdfHeader(doc, titulo, sub) {
@@ -1821,6 +1844,431 @@ function signaturePad(nombre, { actual = null } = {}) {
       if (e.target.classList.contains("modal")) resolve(undefined);
     });
   });
+}
+
+/* ===========================================================================
+   QR
+
+   Codificador minimo, escrito a mano. Genera SOLO lo que hace falta para los
+   carnets: version 1 (21x21), correccion M, modo alfanumerico. Con eso entran
+   20 caracteres y los codigos que usamos son de 16.
+
+   Se eligio la version 1 a proposito: es la mas chica, no lleva patron de
+   alineacion y sus modulos son los mas grandes, o sea la mas facil de leer en
+   una tarjeta manoseada. Y al ser un solo bloque de datos, no hay que entrelazar
+   nada.
+
+   Sin librerias: la CSP del sitio no permite scripts de fuera, y una libreria de
+   QR son 40 KB para algo que aqui cabe en 200 lineas.
+   =========================================================================== */
+
+// Alfabeto del modo alfanumerico del estandar (los 45 caracteres, en su orden).
+const QR_ALFA = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
+
+/* ----------------------------- GF(256) ------------------------------------
+   Aritmetica del cuerpo finito que usa Reed-Solomon, con el polinomio
+   primitivo 0x11D que fija el estandar. */
+const GF_EXP = new Uint8Array(512);
+const GF_LOG = new Uint8Array(256);
+(() => {
+  let x = 1;
+  for (let i = 0; i < 255; i++) {
+    GF_EXP[i] = x;
+    GF_LOG[x] = i;
+    x <<= 1;
+    if (x & 0x100) x ^= 0x11d;
+  }
+  for (let i = 255; i < 512; i++) GF_EXP[i] = GF_EXP[i - 255];
+})();
+
+const gfMul = (a, b) => (a === 0 || b === 0) ? 0 : GF_EXP[GF_LOG[a] + GF_LOG[b]];
+
+// Polinomio generador de grado n, guardado de mayor a menor grado (g[0] = 1).
+function qrGenPoly(n) {
+  let g = [1];
+  for (let i = 0; i < n; i++) {
+    const ng = new Array(g.length + 1).fill(0);
+    for (let j = 0; j < g.length; j++) {
+      ng[j] ^= g[j];                          // g[j] * x
+      ng[j + 1] ^= gfMul(g[j], GF_EXP[i]);    // g[j] * alfa^i
+    }
+    g = ng;
+  }
+  return g;
+}
+
+// Codewords de correccion: el resto de dividir los datos por el generador.
+function qrEcc(datos, largoEcc) {
+  const gen = qrGenPoly(largoEcc);
+  const buf = datos.concat(new Array(largoEcc).fill(0));
+  for (let i = 0; i < datos.length; i++) {
+    const coef = buf[i];
+    if (coef === 0) continue;
+    for (let j = 1; j < gen.length; j++) buf[i + j] ^= gfMul(gen[j], coef);
+  }
+  return buf.slice(datos.length);
+}
+
+/* ------------------------ informacion de formato --------------------------
+   5 bits (nivel de correccion + mascara) + 10 de BCH, todo XOR 0x5412.
+   Comprobacion conocida: para nivel M y mascara 0 el resultado es 0x5412
+   exacto, porque el BCH de 00000 es 0. */
+function qrFormato(mascara) {
+  const ECC_M = 0b00;
+  let datos = (ECC_M << 3) | mascara;
+  let bch = datos << 10;
+  for (let i = 14; i >= 10; i--) {
+    if (bch & (1 << i)) bch ^= 0b10100110111 << (i - 10);
+  }
+  return ((datos << 10) | bch) ^ 0b101010000010010;
+}
+
+/* --------------------------- las 8 mascaras ------------------------------- */
+const QR_MASCARAS = [
+  (f, c) => (f + c) % 2 === 0,
+  (f) => f % 2 === 0,
+  (f, c) => c % 3 === 0,
+  (f, c) => (f + c) % 3 === 0,
+  (f, c) => (Math.floor(f / 2) + Math.floor(c / 3)) % 2 === 0,
+  (f, c) => ((f * c) % 2) + ((f * c) % 3) === 0,
+  (f, c) => (((f * c) % 2) + ((f * c) % 3)) % 2 === 0,
+  (f, c) => (((f + c) % 2) + ((f * c) % 3)) % 2 === 0,
+];
+
+/* ------------------------------ penalizacion ------------------------------
+   Las cuatro reglas del estandar; se elige la mascara con menos puntos. */
+function qrPenalizacion(m) {
+  const n = m.length;
+  let p = 0;
+
+  // Regla 1: cinco o mas modulos seguidos del mismo color.
+  for (const porFila of [true, false]) {
+    for (let a = 0; a < n; a++) {
+      let run = 1;
+      for (let b = 1; b < n; b++) {
+        const act = porFila ? m[a][b] : m[b][a];
+        const ant = porFila ? m[a][b - 1] : m[b - 1][a];
+        if (act === ant) { run++; if (run === 5) p += 3; else if (run > 5) p += 1; }
+        else run = 1;
+      }
+    }
+  }
+  // Regla 2: bloques de 2x2 del mismo color.
+  for (let f = 0; f < n - 1; f++) {
+    for (let c = 0; c < n - 1; c++) {
+      const v = m[f][c];
+      if (v === m[f][c + 1] && v === m[f + 1][c] && v === m[f + 1][c + 1]) p += 3;
+    }
+  }
+  // Regla 3: el patron 1011101 con cuatro claros a un lado (se confunde con un finder).
+  const pat1 = [1,0,1,1,1,0,1,0,0,0,0], pat2 = [0,0,0,0,1,0,1,1,1,0,1];
+  for (const porFila of [true, false]) {
+    for (let a = 0; a < n; a++) {
+      for (let b = 0; b + 11 <= n; b++) {
+        let ok1 = true, ok2 = true;
+        for (let k = 0; k < 11; k++) {
+          const v = porFila ? m[a][b + k] : m[b + k][a];
+          if (v !== pat1[k]) ok1 = false;
+          if (v !== pat2[k]) ok2 = false;
+        }
+        if (ok1) p += 40;
+        if (ok2) p += 40;
+      }
+    }
+  }
+  // Regla 4: desbalance entre oscuros y claros.
+  let oscuros = 0;
+  for (const fila of m) for (const v of fila) oscuros += v;
+  const prop = (oscuros * 100) / (n * n);
+  p += Math.floor(Math.abs(prop - 50) / 5) * 10;
+  return p;
+}
+
+/* ------------------------------- el codigo -------------------------------- */
+// Devuelve una matriz 21x21 de 0/1 con el QR del texto (hasta 20 caracteres del
+// alfabeto alfanumerico).
+function qrMatriz(texto) {
+  const t = String(texto).toUpperCase();
+  for (const ch of t) {
+    if (QR_ALFA.indexOf(ch) < 0) throw new Error("Carácter no válido para el código: " + ch);
+  }
+  if (t.length > 20) throw new Error("El código no puede pasar de 20 caracteres.");
+
+  /* --- bits de datos --- */
+  const bits = [];
+  const push = (valor, largo) => { for (let i = largo - 1; i >= 0; i--) bits.push((valor >> i) & 1); };
+  push(0b0010, 4);          // modo alfanumerico
+  push(t.length, 9);        // cuenta de caracteres (9 bits en versiones 1 a 9)
+  for (let i = 0; i + 1 < t.length; i += 2) {
+    push(QR_ALFA.indexOf(t[i]) * 45 + QR_ALFA.indexOf(t[i + 1]), 11);
+  }
+  if (t.length % 2) push(QR_ALFA.indexOf(t[t.length - 1]), 6);
+
+  const CAP_DATOS = 16, CAP_ECC = 10;     // version 1, correccion M
+  const maxBits = CAP_DATOS * 8;
+  for (let i = 0; i < 4 && bits.length < maxBits; i++) bits.push(0);   // terminador
+  while (bits.length % 8) bits.push(0);
+  const datos = [];
+  for (let i = 0; i < bits.length; i += 8) {
+    datos.push(bits.slice(i, i + 8).reduce((a, b) => (a << 1) | b, 0));
+  }
+  const RELLENO = [0xec, 0x11];
+  for (let i = 0; datos.length < CAP_DATOS; i++) datos.push(RELLENO[i % 2]);
+
+  const codewords = datos.concat(qrEcc(datos, CAP_ECC));
+
+  /* --- estructura fija --- */
+  const N = 21;
+  const m = Array.from({ length: N }, () => new Array(N).fill(0));
+  const usado = Array.from({ length: N }, () => new Array(N).fill(false));
+  const poner = (f, c, v) => { m[f][c] = v; usado[f][c] = true; };
+
+  // Los tres patrones de busqueda, con su separador blanco.
+  for (const [f0, c0] of [[0, 0], [0, N - 7], [N - 7, 0]]) {
+    for (let f = -1; f <= 7; f++) {
+      for (let c = -1; c <= 7; c++) {
+        const ff = f0 + f, cc = c0 + c;
+        if (ff < 0 || ff >= N || cc < 0 || cc >= N) continue;
+        const borde = f === 0 || f === 6 || c === 0 || c === 6;
+        const centro = f >= 2 && f <= 4 && c >= 2 && c <= 4;
+        poner(ff, cc, (borde || centro) && f >= 0 && f <= 6 && c >= 0 && c <= 6 ? 1 : 0);
+      }
+    }
+  }
+  // Lineas de sincronismo.
+  for (let i = 8; i < N - 8; i++) {
+    poner(6, i, i % 2 === 0 ? 1 : 0);
+    poner(i, 6, i % 2 === 0 ? 1 : 0);
+  }
+  // Modulo siempre oscuro.
+  poner(4 * 1 + 9, 8, 1);
+
+  // Se reservan las casillas de la informacion de formato (se rellenan al final).
+  for (let i = 0; i < 9; i++) {
+    if (!usado[8][i]) usado[8][i] = true;
+    if (!usado[i][8]) usado[i][8] = true;
+  }
+  for (let i = 0; i < 8; i++) {
+    usado[8][N - 1 - i] = true;
+    usado[N - 1 - i][8] = true;
+  }
+
+  /* --- datos en zigzag, desde abajo a la derecha --- */
+  let bit = 0;
+  const flujo = [];
+  for (const cw of codewords) for (let i = 7; i >= 0; i--) flujo.push((cw >> i) & 1);
+
+  let subiendo = true;
+  for (let c = N - 1; c > 0; c -= 2) {
+    if (c === 6) c--;                 // la columna de sincronismo no lleva datos
+    for (let i = 0; i < N; i++) {
+      const f = subiendo ? N - 1 - i : i;
+      for (const cc of [c, c - 1]) {
+        if (usado[f][cc]) continue;
+        m[f][cc] = bit < flujo.length ? flujo[bit] : 0;
+        bit++;
+      }
+    }
+    subiendo = !subiendo;
+  }
+
+  /* --- mascara: se prueban las ocho y gana la de menor penalizacion --- */
+  let mejor = null, mejorP = Infinity, mejorMasc = 0;
+  for (let k = 0; k < 8; k++) {
+    const cand = m.map((fila) => fila.slice());
+    for (let f = 0; f < N; f++) {
+      for (let c = 0; c < N; c++) {
+        if (!usado[f][c] && QR_MASCARAS[k](f, c)) cand[f][c] ^= 1;
+      }
+    }
+    ponerFormato(cand, k, N);
+    const pen = qrPenalizacion(cand);
+    if (pen < mejorP) { mejorP = pen; mejor = cand; mejorMasc = k; }
+  }
+  mejor.mascara = mejorMasc;
+  return mejor;
+}
+
+// Escribe los 15 bits de formato en sus dos posiciones.
+function ponerFormato(m, mascara, N) {
+  const f = qrFormato(mascara);
+  for (let i = 0; i < 15; i++) {
+    const b = (f >> i) & 1;
+    // Copia junto al patron de arriba a la izquierda.
+    if (i < 6) m[8][i] = b;
+    else if (i === 6) m[8][7] = b;
+    else if (i === 7) m[8][8] = b;
+    else if (i === 8) m[7][8] = b;
+    else m[14 - i][8] = b;
+    // Copia repartida entre los otros dos patrones.
+    if (i < 8) m[N - 1 - i][8] = b;
+    else m[8][N - 15 + i] = b;
+  }
+  m[N - 8][8] = 1;      // el modulo siempre oscuro
+}
+
+/* ---------------------------- carnets con QR -----------------------------
+   Cada trabajador lleva su tarjeta impresa y el capataz la escanea para
+   marcarlo presente. Prueba que el carnet estuvo ahi; combinado con la firma,
+   que ademas estuvo la persona.
+
+   El escaneo se resuelve CONTRA LA LISTA QUE YA ESTA EN PANTALLA, no
+   consultando al servidor: en obra no se puede depender de la red para cada
+   carnet, y asi funciona igual sin señal.
+-------------------------------------------------------------------------- */
+
+// Dibuja un QR en el PDF como cuadrados negros: sin imagen de por medio, sale
+// nitido a cualquier tamano de impresion.
+function qrEnPdf(doc, texto, x, y, lado) {
+  const m = qrMatriz(texto);
+  const n = m.length;
+  const paso = lado / (n + 8);           // +8 = zona de silencio (4 modulos por lado)
+  const off = paso * 4;
+  doc.rect(x, y, lado, lado, 1);          // fondo blanco, incluida la zona de silencio
+  for (let f = 0; f < n; f++) {
+    for (let c = 0; c < n; c++) {
+      if (m[f][c]) doc.rect(x + off + c * paso, y + off + f * paso, paso + 0.35, paso + 0.35, 0);
+    }
+  }
+}
+
+// Hoja de carnets para recortar: 2 columnas x 4 filas por pagina.
+function carnetsPdf(trabajadores) {
+  const doc = new MiniPdf({ logo: logoParaPdf() });
+  const obra = S.sites.find((x) => x.id === S.siteId)?.name || "Obra";
+  const ANCHO = 240, ALTO = 150, GAPX = 25, GAPY = 20;
+  const X0 = (595 - (ANCHO * 2 + GAPX)) / 2, Y0 = 60;
+
+  let i = 0, pag = 1;
+  for (const w of trabajadores) {
+    const pos = i % 8;
+    if (pos === 0 && i > 0) { pdfFooter(doc, pag++); doc.newPage(); }
+    const cx = X0 + (pos % 2) * (ANCHO + GAPX);
+    const cy = Y0 + Math.floor(pos / 2) * (ALTO + GAPY);
+
+    // Marco de la tarjeta, para saber por donde cortar.
+    doc.line(cx, cy, cx + ANCHO, cy, { gray: 0.75 });
+    doc.line(cx, cy + ALTO, cx + ANCHO, cy + ALTO, { gray: 0.75 });
+    doc.line(cx, cy, cx, cy + ALTO, { gray: 0.75 });
+    doc.line(cx + ANCHO, cy, cx + ANCHO, cy + ALTO, { gray: 0.75 });
+
+    qrEnPdf(doc, w.qrCode, cx + 12, cy + 18, 114);
+
+    const tx = cx + 138;
+    doc.text(tx, cy + 30, FONT_OK(S.account?.name || ""), { size: 7, gray: 0.5 });
+    doc.text(tx, cy + 48, FONT_OK(fitText(w.fullName, 12, 92)), { size: 12, bold: true });
+    doc.text(tx, cy + 63, FONT_OK(fitText(w.trade || "", 8.5, 92)), { size: 8.5, gray: 0.45 });
+    doc.text(tx, cy + 84, FONT_OK(fitText(obra, 8, 92)), { size: 8, gray: 0.45 });
+    if (w.docId) doc.text(tx, cy + 97, FONT_OK(w.docId), { size: 8, gray: 0.45 });
+    // El codigo tambien en texto: si el QR se borra, se puede teclear.
+    doc.text(tx, cy + 128, w.qrCode.replace(/(.{4})/g, "$1 ").trim(), { size: 7, gray: 0.55 });
+    i++;
+  }
+  pdfFooter(doc, pag);
+  return { blob: doc.blob(), name: `carnets_${obra.replace(/[^\w]+/g, "-")}.pdf` };
+}
+
+/* ------------------------------- el escaner ------------------------------ */
+async function scannerScreen() {
+  const soportado = "BarcodeDetector" in window;
+  const marcados = [];
+
+  openModal(`
+    <h2>Escanear carnets</h2>
+    ${soportado ? `
+      <p class="muted" style="margin:-6px 0 12px;">
+        Apunta al carnet. Cada uno queda marcado como presente; al terminar, guarda la lista.
+      </p>
+      <div class="scan-box"><video id="scanVideo" playsinline muted></video><div class="scan-mira"></div></div>
+    ` : `
+      <div class="msg err">Este teléfono no puede escanear desde el navegador.
+        Usa Chrome en Android, o escribe el código del carnet aquí abajo.</div>
+    `}
+
+    <form id="scanManual" class="row" style="gap:8px; margin-top:12px;">
+      <input id="scanCodigo" class="grow" placeholder="Código del carnet"
+             autocapitalize="characters" spellcheck="false"
+             style="padding:11px 13px; border:1px solid var(--line-2); border-radius:var(--r-sm); min-height:46px;">
+      <button class="btn" type="submit">Marcar</button>
+    </form>
+
+    <div id="scanLog" class="scan-log" style="margin-top:12px;"></div>
+    <button class="btn primary wide" id="scanListo" style="margin-top:12px;">Listo</button>
+  `);
+
+  const log = (texto, ok = true) => {
+    marcados.unshift({ texto, ok });
+    $("scanLog").innerHTML = `<div class="card">${marcados.slice(0, 8).map((x) => `
+      <div class="list-item">
+        <span style="color:${x.ok ? "var(--ok)" : "var(--bad)"};">${icon(x.ok ? "check" : "cross")}</span>
+        <span class="grow">${esc(x.texto)}</span>
+      </div>`).join("")}</div>`;
+  };
+
+  // Resuelve un codigo contra la lista del dia que ya esta cargada.
+  let ultimo = "", ultimoT = 0;
+  const marcar = (codigo) => {
+    const cod = String(codigo || "").toUpperCase().replace(/\s+/g, "");
+    if (!cod) return;
+    // El mismo carnet delante de la camara dispara muchas lecturas seguidas.
+    if (cod === ultimo && Date.now() - ultimoT < 2500) return;
+    ultimo = cod; ultimoT = Date.now();
+
+    const w = S.workers.find((x) => (x.qrCode || "").toUpperCase() === cod);
+    if (!w) return log("Carnet no reconocido en esta obra", false);
+    if (w.status === "P") return log(`${w.fullName} ya estaba marcado`, true);
+    w.status = "P";
+    w.reason = null;
+    S.dirty.add(w.id);
+    renderDay();
+    log(`${w.fullName} — presente`);
+    if (navigator.vibrate) navigator.vibrate(60);
+  };
+
+  $("scanManual").addEventListener("submit", (e) => {
+    e.preventDefault();
+    marcar($("scanCodigo").value);
+    $("scanCodigo").value = "";
+  });
+
+  let stream = null, parar = false;
+  const cerrar = () => {
+    parar = true;
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+  };
+  $("scanListo").addEventListener("click", () => { cerrar(); closeModal(); });
+  $("modalClose").addEventListener("click", cerrar);
+
+  if (!soportado) return;
+
+  try {
+    const detector = new BarcodeDetector({ formats: ["qr_code"] });
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment" },   // la camara de atras
+    });
+    const v = $("scanVideo");
+    if (!v) { cerrar(); return; }             // el modal ya se cerro
+    v.srcObject = stream;
+    await v.play();
+
+    const mirar = async () => {
+      if (parar || !document.getElementById("scanVideo")) return cerrar();
+      try {
+        const codigos = await detector.detect(v);
+        for (const c of codigos) marcar(c.rawValue);
+      } catch { /* un cuadro fallido no importa */ }
+      setTimeout(mirar, 350);
+    };
+    mirar();
+  } catch (err) {
+    cerrar();
+    const box = document.querySelector(".scan-box");
+    if (box) {
+      box.outerHTML = `<div class="msg err">No se pudo abrir la cámara${
+        err?.name === "NotAllowedError" ? ": hay que dar permiso desde el navegador" : ""
+      }. Puedes escribir el código a mano.</div>`;
+    }
+  }
 }
 
 /* ===========================================================================
@@ -2166,6 +2614,8 @@ $("pdfBtn").addEventListener("click", () => {
    =========================================================================== */
 async function loadStaff() {
   $("addWorker").classList.toggle("hidden", S.me?.role !== "admin");
+  // Los carnets solo tienen sentido en las obras que usan el escaneo.
+  $("cardsBtn").classList.toggle("hidden", S.me?.role !== "admin" || !qrActivo());
   if (!S.siteId) { $("staffList").innerHTML = `<div class="empty">No hay obras todavía.</div>`; return; }
   $("staffList").innerHTML = `<div class="empty">Cargando…</div>`;
   try {
@@ -2624,10 +3074,16 @@ function siteForm(s) {
           <input type="checkbox" id="sActive" ${s.active ? "checked" : ""} style="width:20px; height:20px;">
           <span>Obra en curso</span>
         </label>
-        <label class="row" style="margin-bottom:6px; gap:8px; align-items:flex-start;">
+        <label class="row" style="margin-bottom:10px; gap:8px; align-items:flex-start;">
           <input type="checkbox" id="sSign" ${s.useSignature ? "checked" : ""} style="width:20px; height:20px; margin-top:2px;">
           <span class="grow">Pedir firma del trabajador
             <span class="muted" style="display:block;">Al marcarlo presente, firma con el dedo. Queda como evidencia.</span>
+          </span>
+        </label>
+        <label class="row" style="margin-bottom:6px; gap:8px; align-items:flex-start;">
+          <input type="checkbox" id="sQr" ${s.useQr ? "checked" : ""} style="width:20px; height:20px; margin-top:2px;">
+          <span class="grow">Marcar escaneando el carnet
+            <span class="muted" style="display:block;">Cada trabajador con su tarjeta. Hay que imprimirlas y repartirlas antes.</span>
           </span>
         </label>`}
       <div id="sMsg"></div>
@@ -2638,7 +3094,11 @@ function siteForm(s) {
   $("sForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const body = { name: $("sName").value, address: $("sAddr").value };
-    if (!isNew) { body.active = $("sActive").checked; body.useSignature = $("sSign").checked; }
+    if (!isNew) {
+      body.active = $("sActive").checked;
+      body.useSignature = $("sSign").checked;
+      body.useQr = $("sQr").checked;
+    }
     try {
       const r = await api(isNew ? "/api/sites" : `/api/sites?id=${s.id}`, { method: isNew ? "POST" : "PUT", body });
       await loadSites();
@@ -2822,11 +3282,24 @@ window.addEventListener("beforeunload", (e) => {
 applyTheme(currentTheme());
 document.querySelectorAll("nav.bottom button").forEach((b) =>
   b.insertAdjacentHTML("afterbegin", icon(b.dataset.icon)));
+$("scanBtn").innerHTML = icon("scan") + "Escanear carnets";
+$("scanBtn").addEventListener("click", scannerScreen);
 $("dayPrev").innerHTML = icon("left");
 $("dayNext").innerHTML = icon("right");
 $("siteChev").innerHTML = icon("down");
 $("loginMark").innerHTML = icon("helmet");
 $("addWorker").innerHTML = icon("plus") + "Agregar";
+$("cardsBtn").innerHTML = icon("card") + "Carnets";
+$("cardsBtn").addEventListener("click", async () => {
+  try {
+    const { workers } = await api(`/api/workers?siteId=${S.siteId}&qr=1&today=${todayObra()}`);
+    const activos = workers.filter((w) => w.active && w.qrCode);
+    if (!activos.length) return toast("No hay personal activo", "err");
+    const { blob, name } = carnetsPdf(activos);
+    download(blob, name);
+    toast(plural(activos.length, "carnet generado", "carnets generados"));
+  } catch (err) { toast(err.message, "err"); }
+});
 $("pdfBtn").innerHTML = icon("download") + "Descargar PDF";
 // El boton de cuenta muestra las iniciales del usuario (se completa al entrar).
 $("meBtn").textContent = "…";
