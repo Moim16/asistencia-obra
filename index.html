@@ -2100,8 +2100,12 @@ function ponerFormato(m, mascara, N) {
     else if (i === 7) m[8][8] = b;
     else if (i === 8) m[7][8] = b;
     else m[14 - i][8] = b;
-    // Copia repartida entre los otros dos patrones.
-    if (i < 8) m[N - 1 - i][8] = b;
+    // Copia repartida entre los otros dos patrones: los bits 0 a 6 suben por la
+    // columna 8 (filas N-1 a N-7) y del 7 al 14 siguen por la fila 8. OJO: son
+    // SIETE en la columna, no ocho. La casilla que sigue, (N-8, 8), es el modulo
+    // siempre oscuro; meter ahi el bit 7 lo perdia y dejaba en blanco su casilla
+    // real (8, N-8), con lo que la segunda copia quedaba corrupta.
+    if (i < 7) m[N - 1 - i][8] = b;
     else m[8][N - 15 + i] = b;
   }
   m[N - 8][8] = 1;      // el modulo siempre oscuro
@@ -2125,9 +2129,19 @@ function qrEnPdf(doc, texto, x, y, lado) {
   const paso = lado / (n + 8);           // +8 = zona de silencio (4 modulos por lado)
   const off = paso * 4;
   doc.rect(x, y, lado, lado, 1);          // fondo blanco, incluida la zona de silencio
+
+  // Cada tramo horizontal de modulos oscuros se dibuja como UN solo rectangulo.
+  // Antes se pintaba modulo a modulo y, para que no quedaran hilos blancos entre
+  // ellos, cada uno se agrandaba un poco: eso engordaba los modulos oscuros casi
+  // un 10% y deformaba las proporciones que el lector usa para ubicarse.
   for (let f = 0; f < n; f++) {
-    for (let c = 0; c < n; c++) {
-      if (m[f][c]) doc.rect(x + off + c * paso, y + off + f * paso, paso + 0.35, paso + 0.35, 0);
+    let c = 0;
+    while (c < n) {
+      if (!m[f][c]) { c++; continue; }
+      let fin = c;
+      while (fin + 1 < n && m[f][fin + 1]) fin++;
+      doc.rect(x + off + c * paso, y + off + f * paso, (fin - c + 1) * paso, paso, 0);
+      c = fin + 1;
     }
   }
 }
@@ -2166,6 +2180,177 @@ function carnetsPdf(trabajadores) {
   }
   pdfFooter(doc, pag);
   return { blob: doc.blob(), name: `carnets_${obra.replace(/[^\w]+/g, "-")}.pdf` };
+}
+
+/* --------------------------- carnet como imagen --------------------------
+   Para mandarle el carnet por WhatsApp a quien no va a imprimirlo: lo guarda en
+   el telefono y lo muestra al llegar. Es un PNG, que es lo que cualquiera puede
+   abrir y reenviar.
+-------------------------------------------------------------------------- */
+async function carnetImagen(w) {
+  const m = qrMatriz(w.qrCode);
+  const n = m.length;
+
+  // Tarjeta vertical: es lo que mejor se ve al mandarla por WhatsApp.
+  const W = 680, H = 980;
+  const BANDA = 190;                       // cabecera oscura con la obra
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d");
+
+  const obra = S.sites.find((x) => x.id === S.siteId)?.name || "";
+  const recorta = (txt, max, px, peso = "") => {
+    g.font = `${peso} ${px}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+    let t = String(txt || "");
+    while (t.length > 1 && g.measureText(t).width > max) t = t.slice(0, -1);
+    return t.length < String(txt || "").length ? t.slice(0, -1) + "…" : t;
+  };
+
+  g.fillStyle = "#fff"; g.fillRect(0, 0, W, H);
+
+  /* --- cabecera: la OBRA es lo primero que se lee --- */
+  g.fillStyle = "#18181b"; g.fillRect(0, 0, W, BANDA);
+  g.textAlign = "center";
+  g.fillStyle = "#a1a1aa";
+  g.font = '500 24px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  g.fillText(recorta(S.account?.name || "", W - 90, 24, "500"), W / 2, 62);
+  g.fillStyle = "#fff";
+  g.font = '600 44px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  g.fillText(recorta(obra, W - 70, 44, "600"), W / 2, 118);
+  g.fillStyle = "#e8720c";                 // una linea de color, para reconocerla de lejos
+  g.fillRect(W / 2 - 60, 148, 120, 5);
+
+  /* --- el QR --- */
+  const LADO = 420;
+  const ESC = Math.floor(LADO / (n + 8));
+  const QR = ESC * (n + 8);
+  const qx = Math.round((W - QR) / 2), qy = BANDA + 46;
+  const off = ESC * 4;
+
+  g.fillStyle = "#fff"; g.fillRect(qx, qy, QR, QR);   // zona de silencio
+  g.fillStyle = "#18181b";
+
+  // Los tres patrones de busqueda se dibujan aparte, con las esquinas
+  // redondeadas: es lo que le da el aire moderno sin tocar las proporciones que
+  // el lector usa para ubicarse. Los modulos de datos siguen cuadrados, que es
+  // lo que mejor se lee.
+  const esFinder = (f, k) =>
+    (f < 7 && k < 7) || (f < 7 && k >= n - 7) || (f >= n - 7 && k < 7);
+
+  for (let f = 0; f < n; f++) {
+    let k = 0;
+    while (k < n) {
+      if (!m[f][k] || esFinder(f, k)) { k++; continue; }
+      let fin = k;
+      while (fin + 1 < n && m[f][fin + 1] && !esFinder(f, fin + 1)) fin++;
+      g.fillRect(qx + off + k * ESC, qy + off + f * ESC, (fin - k + 1) * ESC, ESC);
+      k = fin + 1;
+    }
+  }
+
+  const rr = (x, y, an, al, r) => {
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + an, y, x + an, y + al, r);
+    g.arcTo(x + an, y + al, x, y + al, r);
+    g.arcTo(x, y + al, x, y, r);
+    g.arcTo(x, y, x + an, y, r);
+    g.closePath();
+    g.fill();
+  };
+  for (const [f0, k0] of [[0, 0], [0, n - 7], [n - 7, 0]]) {
+    const bx = qx + off + k0 * ESC, by = qy + off + f0 * ESC;
+    g.fillStyle = "#18181b";
+    rr(bx, by, ESC * 7, ESC * 7, ESC * 2);         // anillo exterior
+    g.fillStyle = "#fff";
+    rr(bx + ESC, by + ESC, ESC * 5, ESC * 5, ESC * 1.4);
+    g.fillStyle = "#18181b";
+    rr(bx + ESC * 2, by + ESC * 2, ESC * 3, ESC * 3, ESC * 0.9);
+  }
+
+  /* --- quien es --- */
+  let y = qy + QR + 62;
+  g.fillStyle = "#18181b";
+  g.font = '600 46px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  g.fillText(recorta(w.fullName, W - 60, 46, "600"), W / 2, y);
+  if (w.trade) {
+    y += 44;
+    g.fillStyle = "#71717a";
+    g.font = '400 28px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+    g.fillText(recorta(w.trade, W - 60, 28), W / 2, y);
+  }
+  if (w.docId) {
+    y += 38;
+    g.fillStyle = "#a1a1aa";
+    g.font = '400 24px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+    g.fillText(w.docId, W / 2, y);
+  }
+
+  /* --- el codigo en texto, por si el QR se borra o no hay como escanear --- */
+  g.strokeStyle = "#e8e8eb"; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(70, H - 92); g.lineTo(W - 70, H - 92); g.stroke();
+  g.fillStyle = "#a1a1aa";
+  g.font = '500 26px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+  g.fillText(w.qrCode.replace(/(.{4})/g, "$1 ").trim(), W / 2, H - 48);
+
+  const blob = await new Promise((ok) => c.toBlob(ok, "image/png"));
+  const slug = w.fullName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w]+/g, "-");
+  // `dataUrl` es para MOSTRARLA en pantalla: la CSP del sitio permite `data:` en
+  // img-src pero NO `blob:`, asi que una URL de blob se veria rota. El blob
+  // queda para descargar y compartir, donde si sirve.
+  return { blob, dataUrl: c.toDataURL("image/png"), name: `carnet_${slug}.png` };
+}
+
+// Muestra el carnet y deja mandarlo o guardarlo.
+async function carnetScreen(w) {
+  let datos = w;
+  if (!datos.qrCode) {
+    try {
+      const { workers } = await api(`/api/workers?siteId=${S.siteId}&all=1&qr=1&today=${todayObra()}`);
+      datos = workers.find((x) => x.id === w.id) || w;
+    } catch (err) { return toast(err.message, "err"); }
+  }
+  if (!datos.qrCode) return toast("Este trabajador todavía no tiene carnet", "err");
+
+  const { blob, dataUrl, name } = await carnetImagen(datos);
+
+  openModal(`
+    <h2>Carnet de ${esc(datos.fullName)}</h2>
+    <p class="muted" style="margin:-6px 0 12px;">
+      Puedes imprimirlo o mandárselo para que lo guarde en el teléfono.
+    </p>
+    <img src="${dataUrl}" alt="" style="width:100%; border:1px solid var(--line); border-radius:var(--r); background:#fff;">
+    <div class="row" style="gap:8px; margin-top:12px;">
+      <button class="btn grow" id="cQr">${icon("whatsapp")}Enviar</button>
+      <button class="btn grow" id="cDl">${icon("download")}Descargar</button>
+    </div>
+    <button class="btn danger wide" id="cNuevo" style="margin-top:8px;">Renovar carnet (el actual deja de servir)</button>
+  `);
+
+  $("cDl").addEventListener("click", () => download(blob, name));
+  $("cQr").addEventListener("click", async () => {
+    const file = new File([blob], name, { type: "image/png" });
+    if (navigator.canShare?.({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: name }); }
+      catch (err) { if (err?.name !== "AbortError") toast("No se pudo compartir.", "err"); }
+    } else {
+      download(blob, name);
+      toast("Tu equipo no puede adjuntar directo. Se descargó para que lo adjuntes.");
+    }
+  });
+  $("cNuevo").addEventListener("click", async () => {
+    if (!(await ask({
+      title: "¿Renovar el carnet?",
+      text: "Se genera un código nuevo y el carnet anterior deja de funcionar. Úsalo si se perdió la tarjeta.",
+      ok: "Renovar", cancel: "Cancelar", danger: true,
+    }))) return;
+    try {
+      const r = await api("/api/workers?qr=1", { method: "POST", body: { workerId: datos.id } });
+      toast("Carnet renovado");
+      carnetScreen({ ...datos, qrCode: r.qrCode });
+      loadStaff();
+    } catch (err) { toast(err.message, "err"); }
+  });
 }
 
 /* ------------------------------- el escaner ------------------------------ */
@@ -2619,7 +2804,7 @@ async function loadStaff() {
   if (!S.siteId) { $("staffList").innerHTML = `<div class="empty">No hay obras todavía.</div>`; return; }
   $("staffList").innerHTML = `<div class="empty">Cargando…</div>`;
   try {
-    const { workers } = await api(`/api/workers?siteId=${S.siteId}&all=1&today=${todayObra()}`);
+    const { workers } = await api(`/api/workers?siteId=${S.siteId}&all=1&qr=1&today=${todayObra()}`);
     if (!workers.length) {
       $("staffList").innerHTML = emptyState("people", "Sin personal en esta obra.");
       return;
@@ -2682,6 +2867,7 @@ function workerForm(w) {
       <button class="btn primary wide" type="submit">${isNew ? "Agregar" : "Guardar"}</button>
     </form>
     ${isNew ? "" : `
+      <button class="btn wide" id="wCarnet" style="margin-top:10px;">${icon("card")}Carnet con QR</button>
       <button class="btn wide" id="wRates" style="margin-top:10px;">${icon("cloud")}Pago por día e historial</button>
       <button class="btn danger wide" id="wDel" style="margin-top:10px;">${icon("trash")}Dar de baja</button>`}
   `);
@@ -2705,6 +2891,8 @@ function workerForm(w) {
       loadStaff(); loadSites();
     } catch (err) { $("wMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`; }
   });
+
+  if (!isNew) $("wCarnet").addEventListener("click", () => carnetScreen(w));
 
   if (!isNew) $("wRates").addEventListener("click", () => ratesScreen(w));
 

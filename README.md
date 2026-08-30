@@ -43,7 +43,12 @@ Dos mecanismos, **cada uno se enciende por obra** desde *Ajustes → Obras → e
 
 **Firma del trabajador.** Al marcar a alguien Presente o Medio día aparece un botón **Firmar**: se le pasa el teléfono y firma con el dedo, igual que la planilla de papel. La firma sale impresa en el PDF del trabajador, junto a su día.
 
-**Carnet con QR.** Cada trabajador lleva su tarjeta impresa y el capataz la escanea para marcarlo presente. Los carnets se generan desde *Personal → Carnets*: una hoja con 8 por página, con el nombre, el oficio, la obra y el código también en texto por si el QR se borra.
+**Carnet con QR.** Cada trabajador lleva su tarjeta y el capataz la escanea para marcarlo presente. Dos formas de repartirlos:
+
+- *Personal → Carnets* — hoja en PDF con 8 tarjetas por página, para imprimir y recortar.
+- *Personal → tocar al trabajador → Carnet con QR* — la tarjeta suelta como imagen, para mandársela por WhatsApp a quien no vaya a imprimirla. Desde ahí también se **renueva** el carnet si se perdió: el código anterior deja de servir.
+
+La tarjeta lleva la **obra** destacada arriba, el nombre, el oficio y el código también en texto, por si el QR se borra o el teléfono no puede escanear.
 
 Prueban cosas distintas: el carnet, que la tarjeta estuvo ahí; la firma, que la persona hizo un gesto en el momento. Juntos son sólidos; el carnet solo no distingue si alguien le prestó la tarjeta a un compañero.
 

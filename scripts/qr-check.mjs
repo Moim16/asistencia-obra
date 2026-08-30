@@ -118,6 +118,65 @@ for (let i = 8; i < 13; i++) {
 check("lineas de sincronismo alternadas", syncOk);
 check("modulo siempre oscuro en (13,8)", m[13][8] === 1);
 
+/* ------------------------------------- 3b. formato leido de la matriz ------
+   Un lector NO sabe la mascara: la saca de la informacion de formato que hay en
+   el propio codigo, en dos copias. Se leen las dos y tienen que coincidir y ser
+   validas. Esto es lo que faltaba antes: se comprobaba el VALOR del formato pero
+   no DONDE quedaba escrito, y por eso paso desapercibido que la segunda copia
+   estaba corrupta. */
+function leerFormato(m, N) {
+  const copia1 = [];
+  for (let i = 0; i < 6; i++) copia1.push(m[8][i]);
+  copia1.push(m[8][7], m[8][8], m[7][8]);
+  for (let i = 9; i < 15; i++) copia1.push(m[14 - i][8]);
+
+  const copia2 = [];
+  for (let i = 0; i < 7; i++) copia2.push(m[N - 1 - i][8]);
+  for (let i = 7; i < 15; i++) copia2.push(m[8][N - 15 + i]);
+
+  const aNum = (bits) => bits.reduce((acc, b, i) => acc | (b << i), 0);
+  return { c1: aNum(copia1), c2: aNum(copia2) };
+}
+
+// Valida los 15 bits: al dividir por el generador BCH el resto debe ser cero.
+function formatoValido(v) {
+  let x = v ^ 0b101010000010010;
+  for (let i = 14; i >= 10; i--) {
+    if (x & (1 << i)) x ^= 0b10100110111 << (i - 10);
+  }
+  return (x & 0x3ff) === 0;
+}
+
+{
+  const { c1, c2 } = leerFormato(m, 21);
+  check("la copia 1 del formato es valida", formatoValido(c1), "0b" + c1.toString(2));
+  check("la copia 2 del formato es valida", formatoValido(c2), "0b" + c2.toString(2));
+  check("las dos copias del formato coinciden", c1 === c2,
+    JSON.stringify({ c1: c1.toString(2).padStart(15, "0"), c2: c2.toString(2).padStart(15, "0") }));
+
+  const datos = (c1 ^ 0b101010000010010) >> 10;
+  const nivel = (datos >> 3) & 0b11;
+  const masc = datos & 0b111;
+  check("el nivel de correccion leido es M", nivel === 0b00, String(nivel));
+  check("la mascara leida coincide con la elegida", masc === m.mascara, `leida=${masc} elegida=${m.mascara}`);
+  check("el modulo siempre oscuro esta en (N-8, 8)", m[21 - 8][8] === 1);
+}
+
+// Y con todas las mascaras, no solo con la que salio elegida esta vez.
+{
+  let todasOk = true;
+  const vistas = new Set();
+  for (const txt of ["AAAA1111BBBB2222", "ZZZZ9999YYYY8888", "MNPQRSTUVWXY2345",
+                     "HBH5XQRAUEQJUPYJ", "3AW2SLQE3YMRJW7Z", "LJ47N5K3EZSZ2HKJ",
+                     "ABCDEFGHJKLMNPQR", "23456789ABCDEFGH"]) {
+    const mm = qrMatriz(txt);
+    vistas.add(mm.mascara);
+    const { c1, c2 } = leerFormato(mm, 21);
+    if (!formatoValido(c1) || !formatoValido(c2) || c1 !== c2) todasOk = false;
+  }
+  check(`el formato queda bien con las ${vistas.size} mascaras que salieron`, todasOk, JSON.stringify([...vistas]));
+}
+
 /* ------------------------------------------------- 4. leer los datos ------ */
 // Se recorre el zigzag al reves, se quita la mascara y se recuperan los
 // codewords. Si coinciden con los que se codificaron, la colocacion es correcta.
