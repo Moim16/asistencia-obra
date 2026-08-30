@@ -121,6 +121,12 @@ Los iconos PNG los genera `node scripts/make-icons.mjs` a partir de la misma geo
 
 > **Chrome en Android no ofrece instalar si el manifest solo trae un SVG**: exige al menos un PNG de 192x192. Ese era el motivo de que nunca apareciera la opción. El icono `maskable` va con margen porque Android lo recorta con su propia forma.
 
+### Guía de uso
+
+*Ajustes → Ayuda → Cómo funciona*: la guía completa dentro de la app, y un botón para bajarla en PDF (portada + 13 secciones, escrita para quien usa la aplicación, sin nada técnico).
+
+El texto se escribe **una sola vez**, en la constante `GUIA` de `index.html`, y de ahí salen las dos versiones. Si estuvieran por separado, al poco tiempo dirían cosas distintas.
+
 ### La fecha de la obra
 
 Todo el sistema usa la hora de **Nicaragua** (`America/Managua`, UTC-6 todo el año), en el servidor y en la app. No se usa la zona del teléfono: un equipo mal configurado marcaría el día equivocado. Los montos van en **córdobas (C$)**.

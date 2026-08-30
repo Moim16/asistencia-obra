@@ -351,6 +351,16 @@ nav.bottom button.on::before {
 }
 nav.bottom svg { width:21px; height:21px; }
 
+/* --------------------------------------------------------------- guia --- */
+.guia-lista, .guia-pasos { margin:0 0 10px; padding-left:20px; }
+.guia-lista li, .guia-pasos li { margin-bottom:7px; }
+.guia-lista { list-style:disc; }
+.guia-pasos { list-style:decimal; }
+.guia-nota {
+  margin:10px 0 4px; padding:9px 12px; font-size:13.5px; color:var(--muted);
+  background:var(--soft); border-left:3px solid var(--line-2); border-radius:0 var(--r-sm) var(--r-sm) 0;
+}
+
 /* -------------------------------------------------------------------- modal */
 .modal { position:fixed; inset:0; z-index:40; background:var(--veil); display:flex; align-items:flex-end; }
 .modal .sheet {
@@ -1461,7 +1471,10 @@ class MiniPdf {
   // Coordenadas desde ARRIBA-izquierda, que es como se piensa una hoja.
   // El PDF las cuenta desde abajo, asi que se invierte aqui y no en cada llamada.
   text(x, y, str, { size = 10, bold = false, align = "left", gray = 0 } = {}) {
-    let t = String(str ?? "");
+    // La conversion se aplica SIEMPRE aqui, no en cada llamada: un caracter que
+    // no exista en WinAnsi se escribe como el byte de abajo y sale otra cosa.
+    // Paso con la vineta, que aparecia como una comilla en la guia.
+    let t = FONT_OK(str ?? "");
     if (align === "right") x -= textWidth(t, size);
     else if (align === "center") x -= textWidth(t, size) / 2;
     const esc = t.replace(/[\\()]/g, (c) => "\\" + c);
@@ -1561,6 +1574,7 @@ const M = 45;                 // margen
 // su equivalente de siempre antes de descartar lo que no entre. Si no, un nombre
 // recortado terminaba en "?" en el PDF.
 const FONT_OK = (t) => String(t ?? "")
+  .replace(/\u2022/g, "\x95")            // vineta: en WinAnsi va en 0x95
   .replace(/\u2026/g, "...")
   .replace(/[\u2018\u2019]/g, "'")
   .replace(/[\u201C\u201D]/g, '"')
@@ -3090,6 +3104,271 @@ async function ratesScreen(w) {
 }
 
 /* ===========================================================================
+   Guia de uso
+
+   El contenido se escribe UNA vez y sirve para las dos salidas: la pantalla
+   "Cómo funciona" y el PDF que se descarga. Si estuvieran por separado, al poco
+   tiempo dirian cosas distintas.
+
+   Esta escrita para quien usa la app, no para quien la programa: nada de
+   endpoints, tablas ni nombres de archivo.
+   =========================================================================== */
+const GUIA = [
+  {
+    t: "Para qué sirve",
+    b: [
+      ["p", "Con esta aplicación llevas la asistencia diaria de tu personal en la obra y sabes, sin sacar cuentas a mano, cuántos días trabajó cada quien y cuánto hay que pagarle."],
+      ["p", "El capataz pasa lista desde su teléfono. Los trabajadores no necesitan cuenta ni teléfono."],
+    ],
+  },
+  {
+    t: "Quién puede hacer qué",
+    b: [
+      ["lista", [
+        "Administrador: crea obras, da de alta y baja al personal, fija el pago por día, registra abonos y pagos, y crea los usuarios.",
+        "Capataz: pasa lista y ve reportes, pero solo de las obras que el administrador le asignó.",
+      ]],
+      ["nota", "Cada empresa está separada por completo. Un administrador nunca ve las obras ni el personal de otra empresa."],
+    ],
+  },
+  {
+    t: "Antes de empezar: preparar la obra",
+    b: [
+      ["pasos", [
+        "Entra a Ajustes, luego Obras, y toca Nueva obra. Ponle nombre y dirección.",
+        "Ve a Personal y toca Agregar. Escribe el nombre del trabajador, su oficio y cuánto gana por día completo.",
+        "Repite con toda la cuadrilla. Después puedes cambiar cualquier dato.",
+      ]],
+      ["nota", "Si te olvidas del pago por día y lo cargas después, no pasa nada: los días que ya marcaste se pagan igual con ese monto."],
+    ],
+  },
+  {
+    t: "Pasar lista todos los días",
+    b: [
+      ["p", "Es lo que vas a hacer a diario, y toma menos de un minuto."],
+      ["pasos", [
+        "Abre la pestaña Lista. Arriba sale la fecha de hoy; con las flechas te mueves a otro día.",
+        "Si casi todos vinieron, toca Todos presentes y después corrige a los que faltaron.",
+        "Por cada trabajador elige Presente, Medio día o Falta.",
+        "Si marcaste Medio día o Falta, aparecen los motivos: permiso, lluvia, feriado y otros. Es opcional pero ayuda después.",
+        "Toca Guardar lista. Mientras no guardes, el botón te dice cuántos cambios tienes pendientes.",
+      ]],
+      ["nota", "Un día sin marcar no cuenta como falta: simplemente no suma. Sirve para los domingos o los días que la obra no trabajó."],
+    ],
+  },
+  {
+    t: "Cuánto vale cada día",
+    b: [
+      ["lista", [
+        "Presente: un día completo.",
+        "Medio día: la mitad del pago.",
+        "Falta: no se paga.",
+      ]],
+      ["p", "Si a alguien le subes el pago por día, puedes hacerlo desde una fecha en adelante. Los días anteriores se siguen pagando al monto que tenía antes, así que subirle el sueldo nunca cambia lo que ya trabajó."],
+    ],
+  },
+  {
+    t: "La firma del trabajador",
+    b: [
+      ["p", "Sirve para cuando alguien dice después que sí vino un día que no vino. Al marcarlo presente, le pasas el teléfono y firma con el dedo, igual que la planilla de papel."],
+      ["p", "Se activa por obra: en Ajustes, Obras, tocas la obra y marcas Pedir firma del trabajador. Así solo la tienen las obras donde de verdad hace falta."],
+      ["nota", "El resumen del día te avisa cuántos trabajaron y todavía no firman, para que sepas a quién buscar antes de que se vayan."],
+    ],
+  },
+  {
+    t: "Los carnets con código",
+    b: [
+      ["p", "Cada trabajador lleva su tarjeta y tú la escaneas para marcarlo presente. También se activa por obra, en la misma pantalla que la firma."],
+      ["pasos", [
+        "En Personal, toca Carnets para bajar una hoja lista para imprimir y recortar.",
+        "O toca a un trabajador y luego Carnet con QR para mandárselo por WhatsApp, si no vas a imprimir.",
+        "En la Lista aparece el botón Escanear carnets. Apuntas a cada tarjeta y queda marcado presente.",
+        "Al terminar, toca Guardar lista como siempre.",
+      ]],
+      ["nota", "Si alguien pierde su tarjeta, entra a su carnet y toca Renovar: se genera un código nuevo y el anterior deja de servir."],
+      ["nota", "El escaneo funciona en teléfonos Android. En iPhone se escribe el código que sale impreso en la tarjeta."],
+    ],
+  },
+  {
+    t: "Cuando no hay señal",
+    b: [
+      ["p", "Pasar lista no necesita internet. La aplicación guarda lo que marcas en el teléfono y lo envía solo cuando vuelve la señal."],
+      ["p", "Arriba te avisa si estás sin conexión y cuántas marcas faltan por enviar. No tienes que hacer nada: se manda solo."],
+      ["nota", "Los reportes y la gestión de personal sí necesitan conexión."],
+    ],
+  },
+  {
+    t: "Abonos: cuando piden adelanto",
+    b: [
+      ["p", "Si un trabajador pide plata antes del día de pago, lo registras como abono y se le descuenta de lo que le toca cobrar."],
+      ["pasos", [
+        "Ve a Reporte y cambia a la pestaña Pagos.",
+        "Toca el botón Abono.",
+        "Elige al trabajador, escribe cuánto le entregaste, la fecha y el motivo si quieres.",
+      ]],
+      ["nota", "Si le adelantaste más de lo que trabajó, el saldo queda en rojo y se le descuenta la próxima semana."],
+    ],
+  },
+  {
+    t: "El día de pago",
+    b: [
+      ["p", "El día de pago es el sábado. En Reporte, pestaña Pagos, ves de cada trabajador cuánto ganó, cuánto se le adelantó y cuánto hay que entregarle."],
+      ["pasos", [
+        "Toca al trabajador para ver el detalle día por día.",
+        "Revisa el monto y toca Marcar como pagado.",
+        "Si te equivocaste, en esa misma pantalla puedes deshacer el pago.",
+      ]],
+      ["nota", "Al pagar, el monto queda congelado. Si después le subes el pago por día, lo que ya cobró no cambia."],
+    ],
+  },
+  {
+    t: "Reportes y comprobantes",
+    b: [
+      ["p", "En Reporte tienes dos pestañas: Días, con la asistencia, y Pagos, con la plata. Arriba eliges el período; por defecto sale la semana que se paga este sábado."],
+      ["lista", [
+        "Descargar PDF: el reporte de toda la obra, para guardar o imprimir.",
+        "Al tocar un trabajador: su detalle, y desde ahí puedes mandarle por WhatsApp un resumen escrito o el comprobante en PDF con sus días, sus firmas y el total a recibir.",
+      ]],
+    ],
+  },
+  {
+    t: "Tenerla como aplicación",
+    b: [
+      ["p", "Puedes instalarla en el teléfono para abrirla como cualquier otra app, sin entrar al navegador."],
+      ["pasos", [
+        "Entra a Ajustes.",
+        "Toca Instalar en el teléfono.",
+        "Sigue lo que te indique. Si no aparece la opción, ya está instalada.",
+      ]],
+    ],
+  },
+  {
+    t: "Si algo no sale bien",
+    b: [
+      ["lista", [
+        "No puedo marcar a alguien: revisa que esté dado de alta en esa obra y que no esté de baja.",
+        "El capataz no ve una obra: el administrador tiene que asignársela en Ajustes, Usuarios del sistema.",
+        "Marqué a alguien y no aparece: fíjate en la fecha de arriba, puede que estés en otro día.",
+        "No aparece el botón de firmar o de escanear: hay que activarlo en esa obra, desde Ajustes, Obras.",
+        "Un trabajador aparece con cero de pago: todavía no tiene monto cargado. Entra a su ficha y ponle el pago por día.",
+      ]],
+    ],
+  },
+];
+
+/* ------------------------------- la pantalla ----------------------------- */
+function guiaScreen() {
+  openModal(`
+    <h2>Cómo funciona</h2>
+    <p class="muted" style="margin:-6px 0 14px;">
+      Todo lo que necesitas para usar la aplicación en la obra.
+    </p>
+    <button class="btn primary wide" id="gPdf" style="margin-bottom:16px;">
+      ${icon("download")}Descargar la guía en PDF
+    </button>
+    ${GUIA.map((sec, i) => `
+      <h3>${i + 1}. ${esc(sec.t)}</h3>
+      <div class="card pad">
+        ${sec.b.map(([tipo, val]) => {
+          if (tipo === "p") return `<p style="margin:0 0 10px;">${esc(val)}</p>`;
+          if (tipo === "nota") return `<p class="guia-nota">${esc(val)}</p>`;
+          if (tipo === "lista") return `<ul class="guia-lista">${val.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
+          return `<ol class="guia-pasos">${val.map((x) => `<li>${esc(x)}</li>`).join("")}</ol>`;
+        }).join("")}
+      </div>`).join("")}
+    <div style="height:8px;"></div>
+  `);
+  $("gPdf").addEventListener("click", () => {
+    const { blob, name } = manualPdf();
+    download(blob, name);
+  });
+}
+
+/* --------------------------------- el PDF -------------------------------- */
+// Escribe un parrafo ajustando el ancho y devuelve la y donde sigue.
+function pdfParrafo(doc, texto, x, y, ancho, { size = 10, gray = 0.2, bold = false, alto = 14 } = {}) {
+  let linea = "";
+  for (const palabra of FONT_OK(texto).split(/\s+/)) {
+    const prueba = linea ? linea + " " + palabra : palabra;
+    if (textWidth(prueba, size) > ancho && linea) {
+      doc.text(x, y, linea, { size, gray, bold });
+      y += alto;
+      linea = palabra;
+    } else linea = prueba;
+  }
+  if (linea) { doc.text(x, y, linea, { size, gray, bold }); y += alto; }
+  return y;
+}
+
+function manualPdf() {
+  const doc = new MiniPdf({ logo: logoParaPdf() });
+  const ANCHO = 595 - M * 2;
+  let pag = 1;
+
+  /* --- portada --- */
+  doc.image(M, 120, 70, 70);
+  doc.text(M, 240, FONT_OK(S.account?.name || ""), { size: 11, gray: 0.45 });
+  doc.text(M, 288, "Asistencia en Obra", { size: 34, bold: true });
+  doc.text(M, 318, "Guía de uso", { size: 18, gray: 0.35 });
+  doc.line(M, 344, 595 - M, 344);
+  pdfParrafo(doc, "Cómo llevar la asistencia diaria de tu personal, saber cuántos días trabajó cada quien y cuánto hay que pagarle.",
+    M, 372, ANCHO, { size: 11, gray: 0.35, alto: 16 });
+  doc.text(M, 842 - 60, `Generado el ${new Date().toLocaleDateString("es-NI", { timeZone: TZ_OBRA })}`,
+    { size: 8, gray: 0.55 });
+
+  /* --- contenido --- */
+  doc.newPage();
+  let y = M + 20;
+  const salto = (necesita) => {
+    if (y + necesita < 842 - 60) return;
+    doc.text(595 - M, 842 - 40, `${pag}`, { size: 8, gray: 0.55, align: "right" });
+    pag++;
+    doc.newPage();
+    y = M + 20;
+  };
+
+  GUIA.forEach((sec, i) => {
+    salto(70);
+    y += i === 0 ? 0 : 14;
+    doc.text(M, y, `${i + 1}. ${FONT_OK(sec.t)}`, { size: 15, bold: true });
+    y += 8;
+    doc.line(M, y, 595 - M, y, { gray: 0.85 });
+    y += 20;
+
+    for (const [tipo, val] of sec.b) {
+      if (tipo === "p") {
+        salto(40);
+        y = pdfParrafo(doc, val, M, y, ANCHO, { size: 10, gray: 0.2, alto: 15 }) + 8;
+      } else if (tipo === "nota") {
+        salto(44);
+        // Las notas van con una barra al lado, para que se distingan de un vistazo.
+        const yIni = y - 10;
+        const yFin = pdfParrafo(doc, val, M + 16, y, ANCHO - 16, { size: 9.5, gray: 0.42, alto: 14 });
+        doc.rect(M, yIni, 3, yFin - yIni - 4, 0.75);
+        y = yFin + 10;
+      } else if (tipo === "lista") {
+        for (const item of val) {
+          salto(34);
+          doc.text(M + 6, y, "\u2022", { size: 10, gray: 0.45 });
+          y = pdfParrafo(doc, item, M + 20, y, ANCHO - 20, { size: 10, gray: 0.2, alto: 15 }) + 5;
+        }
+        y += 4;
+      } else {
+        val.forEach((item, k) => {
+          salto(34);
+          doc.text(M + 6, y, `${k + 1}.`, { size: 10, bold: true, gray: 0.3 });
+          y = pdfParrafo(doc, item, M + 24, y, ANCHO - 24, { size: 10, gray: 0.2, alto: 15 }) + 5;
+        });
+        y += 4;
+      }
+    }
+  });
+  doc.text(595 - M, 842 - 40, `${pag}`, { size: 8, gray: 0.55, align: "right" });
+
+  return { blob: doc.blob(), name: "guia-asistencia-en-obra.pdf" };
+}
+
+/* ===========================================================================
    Vista: ajustes
    =========================================================================== */
 function renderSettings() {
@@ -3156,6 +3435,11 @@ function renderSettings() {
                promptInstalar ? '<span class="badge admin">listo</span>' : "")}
       </div>`}
 
+    <h3>Ayuda</h3>
+    <div class="card">
+      ${item("guia", "info", "Cómo funciona")}
+    </div>
+
     <h3>Cuenta</h3>
     <div class="card">
       ${item("pw", "key", "Cambiar mi contraseña")}
@@ -3175,6 +3459,7 @@ function renderSettings() {
   $("settingsBody").querySelectorAll("[data-act]").forEach((b) => {
     b.addEventListener("click", () => ({
       pick: () => $("siteBtn").click(),
+      guia: guiaScreen,
       instalar: instalarApp,
       brand: brandScreen,
       sites: sitesScreen,
