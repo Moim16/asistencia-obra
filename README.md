@@ -52,6 +52,8 @@ La tarjeta lleva la **obra** destacada arriba, el nombre, el oficio y el código
 
 Prueban cosas distintas: el carnet, que la tarjeta estuvo ahí; la firma, que la persona hizo un gesto en el momento. Juntos son sólidos; el carnet solo no distingue si alguien le prestó la tarjeta a un compañero.
 
+Hay una tercera firma, la del **día de pago**, que no prueba asistencia sino entrega de plata: va más abajo, en *Abonos y día de pago*.
+
 Los dos son **opcionales por día**: se puede guardar sin ellos, y el resumen avisa cuántos trabajaron y todavía no firman.
 
 La firma se borra sola si el día pasa a **falta** o queda **sin marcar** — firmar una ausencia no significa nada.
@@ -93,6 +95,31 @@ En *Reporte → Pagos* se ve, por trabajador, lo **ganado**, los **abonos** y lo
 
 > **Al pagar, el monto se congela.** Queda registrado lo que de verdad se le pagó ese día. Si después le subes el pago por día, lo ya pagado no se reescribe.
 
+#### Firma de recibido
+
+Se enciende por obra en *Ajustes → Obras → editar*, con su propia casilla: **Pedir firma al entregar el pago**. Una obra puede querer la firma diaria y no esta, o al revés.
+
+Con ella encendida, al tocar *Marcar como pagado* primero sale la confirmación con el monto y **después** el lienzo para firmar. Ese orden importa: lo que se firma es la cifra que se acaba de leer, no un papel en blanco.
+
+La firma queda en el **comprobante en PDF** del trabajador, al final de todas las cuentas, con la fórmula de siempre: *Recibí de <empresa> la cantidad de <monto> por los días trabajados del … al …*, la firma sobre la línea y la fecha.
+
+- Es **opcional incluso donde la obra la pide**: si el trabajador no está delante, el botón *Pagar sin firma* liquida igual, y el detalle deja dicho que ese pago no se firmó. Igual que con la asistencia, nunca se bloquea el trabajo por falta de firma.
+- Va sellada con la **misma marca de tiempo** que los días pagados y los abonos descontados, así que deshacer el pago se lleva también la firma. Un comprobante de un pago que ya no existe solo puede confundir.
+- El monto, el período y los abonos descontados se guardan **congelados junto a la imagen**: una firma vale por lo que decía el papel cuando se firmó.
+
+### Si se pierde la contraseña
+
+Al crear la empresa, la app entrega al administrador un **código de recuperación** (`XXXX-XXXX-XXXX`) y le insiste en guardarlo, porque **no se puede volver a ver**: en la base solo queda su hash, igual que con la contraseña.
+
+Desde la pantalla de entrada, *¿Olvidaste tu contraseña?* pide usuario, código y contraseña nueva; con eso se entra directo. Cualquier usuario puede sacar el suyo cuando quiera desde *Ajustes → Código de recuperación*, dando su contraseña actual.
+
+- Es de **un solo uso**, y al usarlo se entrega otro en el acto: quien acaba de recuperar la cuenta es justo quien no puede quedarse otra vez sin salida.
+- Generar uno nuevo **invalida el anterior**, para que un código apuntado en un papel viejo no siga abriendo la cuenta.
+- Se pide la contraseña actual para generarlo porque, con el teléfono desbloqueado en la mano, sacar un código sería quedarse con la cuenta para siempre.
+- Usa el **mismo contador de intentos** que el login (5 fallos, 15 minutos): da igual por cuál de las dos puertas se empuje.
+
+> **No hay correo de recuperación a propósito.** Mandar un correo obliga a contratar un servicio, guardar una clave más y depender de que ese servicio conteste. Un código de respaldo, como el de cualquier app con doble factor, resuelve lo mismo sin depender de nadie. A un capataz, además, siempre puede rescatarlo su administrador desde *Ajustes → Usuarios del sistema*.
+
 ### Reportes: PDF y WhatsApp
 
 - **Reporte de la obra** en PDF: todos los trabajadores con días, ganado, pagado y pendiente.
@@ -123,7 +150,7 @@ Los iconos PNG los genera `node scripts/make-icons.mjs` a partir de la misma geo
 
 ### Guía de uso
 
-*Ajustes → Ayuda → Cómo funciona*: la guía completa dentro de la app, y un botón para bajarla en PDF (portada + 13 secciones, escrita para quien usa la aplicación, sin nada técnico).
+*Ajustes → Ayuda → Cómo funciona*: la guía completa dentro de la app, y un botón para bajarla en PDF (portada + 14 secciones, escrita para quien usa la aplicación, sin nada técnico).
 
 El texto se escribe **una sola vez**, en la constante `GUIA` de `index.html`, y de ahí salen las dos versiones. Si estuvieran por separado, al poco tiempo dirían cosas distintas.
 
@@ -158,27 +185,29 @@ Igual que `marcador-vivo`, sin build ni framework:
 
 | Endpoint | Qué hace |
 |---|---|
-| `api/auth.js` | Alta de empresa, login, usuarios y asignación de obras |
+| `api/auth.js` | Alta de empresa, login, usuarios, asignación de obras y código de recuperación |
 | `api/sites.js` | Obras |
 | `api/workers.js` | Personal y pago por día (con historial) |
 | `api/attendance.js` | Pasar lista de un día (leer y guardar), con la firma |
 | `api/workers.js` | ...y el código del carnet de cada trabajador |
 | `api/report.js` | Días trabajados y montos por período |
-| `api/payments.js` | Marcar días como pagados (y deshacer), descontando abonos |
+| `api/payments.js` | Marcar días como pagados (y deshacer), descontando abonos, con la firma de recibido |
 | `api/advances.js` | Abonos: registrar, listar y quitar |
 
 ### Tablas
 
 ```
 accounts      empresas (el cerco duro: nadie ve fuera de la suya) + logo
-users         quienes entran a la app (admin / capataz)
+users         quienes entran a la app (admin / capataz) + código de recuperación
 site_users    qué obras ve cada capataz
-sites         obras (useSignature / useQr: la evidencia se activa por obra)
+sites         obras (useSignature / useQr / useSignPay: cada evidencia se
+              activa por obra)
 workers       albañiles (pertenecen a una obra) + qrCode del carnet
 worker_rates  pago por día del trabajador, vigente DESDE una fecha
 attendance    una fila por trabajador y día  ->  UNIQUE (workerId, day)
               paidAt / paidAmount = pago, con el monto congelado
 attendance_signs  firma del trabajador, misma clave (workerId, day)
+payment_signs     firma de recibido, colgada del sello del pago (workerId, paidAt)
 advances      abonos entregados por adelantado
               settledAt = cuándo se descontó (NULL = todavía pendiente)
 ```
@@ -209,7 +238,7 @@ node scripts/smoke.mjs           # corre y borra los datos de prueba
 node scripts/smoke.mjs --keep    # deja datos para mirar la app (jefe / obra1234)
 ```
 
-130 pruebas contra los handlers reales, sin levantar servidor. Requiere base **vacía**. Cubren, entre otras cosas, que una empresa no pueda tocar los datos de otra, que un capataz solo vea sus obras, que cada día se pague al monto que regía ese día, que subir el pago no reescriba lo ya pagado, que los días marcados antes de cargar el pago igual se paguen, que los abonos se descuenten y se devuelvan bien al deshacer un pago, que la firma se borre al marcar falta o desmarcar el día, y que los carnets sean únicos y se puedan renovar.
+162 pruebas contra los handlers reales, sin levantar servidor. Requiere base **vacía**. Cubren, entre otras cosas, que una empresa no pueda tocar los datos de otra, que un capataz solo vea sus obras, que cada día se pague al monto que regía ese día, que subir el pago no reescriba lo ya pagado, que los días marcados antes de cargar el pago igual se paguen, que los abonos se descuenten y se devuelvan bien al deshacer un pago, que la firma se borre al marcar falta o desmarcar el día, que deshacer un pago se lleve su firma de recibido y que una firma inválida no deje los días pagados a medias, que el código de recuperación sirva una sola vez y el anterior deje de valer, y que los carnets sean únicos y se puedan renovar.
 
 ---
 
@@ -251,7 +280,5 @@ node scripts/smoke.mjs --keep    # deja datos para mirar la app (jefe / obra1234
 
 1. **Horas extras.** El modelo es por jornada (1 / 0,5 / 0). Si se necesitan horas reales, agregar columnas de entrada/salida a `attendance`.
 2. **Feriados.** Marcar un día como no laborable para toda la obra de una vez, en lugar de trabajador por trabajador.
-4. **Recuperar contraseña.** Hoy solo el admin puede resetear la de un capataz; si el admin pierde la suya, hay que tocar la base a mano.
-5. **Firma al recibir el pago.** Hoy se firma la asistencia diaria; falta que firme el sábado sobre el detalle, como comprobante de que recibió la plata.
-6. **Escanear en iPhone.** `BarcodeDetector` no existe en Safari; ahí hay que escribir el código del carnet a mano. Se podría resolver con un decodificador propio, pero es bastante más código que el codificador.
-7. **Foto como evidencia.** Una foto grupal diaria de la cuadrilla sería la prueba más difícil de discutir, y cuesta un solo gesto para todos.
+3. **Escanear en iPhone.** `BarcodeDetector` no existe en Safari; ahí hay que escribir el código del carnet a mano. Se podría resolver con un decodificador propio, pero es bastante más código que el codificador.
+4. **Foto como evidencia.** Una foto grupal diaria de la cuadrilla sería la prueba más difícil de discutir, y cuesta un solo gesto para todos.

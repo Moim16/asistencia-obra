@@ -8,6 +8,9 @@
 //  DELETE /api/payments?siteId=&workerId=&from=&to=
 //         -> deshace el pago de ese rango (por si se marco por error).
 //
+//  GET    /api/payments?siteId=&workerId=&from=&to=
+//         -> las firmas de recibido de ese periodo, para el comprobante en PDF.
+//
 //  El monto se CONGELA al pagar (`paidAmount`). Si despues se le sube el pago
 //  al trabajador, lo ya pagado no se reescribe: queda registrado lo que de
 //  verdad se le pago ese dia. Los dias sin marcar y las faltas no se pagan.
@@ -17,11 +20,20 @@
 //  deshacer el pago devuelve esos abonos a pendientes y las cuentas no quedan
 //  mintiendo. La plata que se entrega en mano es dias - abonos.
 //
-//  Solo el administrador paga; el capataz pasa lista y consulta.
+//  FIRMA DE RECIBIDO: si la obra la pide (`useSignPay`), al liquidar se manda
+//  tambien `sign` con la firma del trabajador sobre el detalle. Se guarda con la
+//  MISMA marca de tiempo que los dias y los abonos, asi que deshacer el pago se
+//  lleva la firma con el: una firma sin pago detras no probaria nada. Es
+//  opcional dentro de la propia obra que la pide, igual que la firma diaria: si
+//  el trabajador no esta delante, se paga igual y queda constancia de que ese
+//  pago no se firmo.
+//
+//  Solo el administrador paga y deshace; leer las firmas puede cualquiera que
+//  vea la obra, porque el comprobante en PDF lo saca tambien el capataz.
 // =============================================================================
 
 import { db, ensureSchema, nowIso } from "../lib/db.js";
-import { readJson, parseDay, parseId } from "../lib/http.js";
+import { readJson, parseDay, parseId, parseDataJpeg } from "../lib/http.js";
 import { currentUser, isAdmin, deny, notYours, canSeeSite } from "../lib/auth.js";
 
 // Pago vigente el dia de la fila, por el valor del dia (1 completo, 0,5 medio).
@@ -39,15 +51,20 @@ const AMOUNT_SQL = `
     0)
   * CASE attendance.status WHEN 'P' THEN 1.0 WHEN 'M' THEN 0.5 ELSE 0 END`;
 
+const MAX_SIGN = 250 * 1024;   // el navegador la manda chica; esto es el tope duro
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
 export default async function handler(req, res) {
   try {
     await ensureSchema();
-    const body = req.method === "DELETE" ? {} : await readJson(req);
+    const body = req.method === "POST" ? await readJson(req) : {};
     const me = await currentUser(req, body);
     if (!me) return deny(res);
-    if (!isAdmin(me)) return deny(res, true);
+    // Pagar y deshacer es cosa del admin; consultar el comprobante, no.
+    if (req.method !== "GET" && !isAdmin(me)) return deny(res, true);
 
-    const src = req.method === "DELETE" ? req.query : body;
+    const src = req.method === "POST" ? body : req.query;
     const siteId = parseId(src?.siteId);
     const workerId = parseId(src?.workerId);
     const from = parseDay(src?.from);
@@ -59,9 +76,38 @@ export default async function handler(req, res) {
     if (from > to) return res.status(400).json({ error: "La fecha inicial es posterior a la final." });
     if (!(await canSeeSite(me, siteId))) return notYours(res);
 
+    /* ------------------------------------------- FIRMAS DE RECIBIDO (GET) -- */
+    if (req.method === "GET") {
+      // Solo los pagos que caen ENTEROS dentro del rango consultado: un
+      // comprobante vale por su periodo, y mezclarlo con otro lo volveria
+      // ilegible.
+      const rs = await db.execute({
+        sql: `SELECT paidAt, fromDay, toDay, amount, advances, net, image, signedAt
+                FROM payment_signs
+               WHERE siteId = ? AND workerId = ? AND fromDay >= ? AND toDay <= ?
+               ORDER BY paidAt`,
+        args: [siteId, workerId, from, to],
+      });
+      return res.status(200).json({
+        receipts: rs.rows.map((r) => ({
+          paidAt: r.paidAt, fromDay: r.fromDay, toDay: r.toDay,
+          amount: Number(r.amount), advances: Number(r.advances), net: Number(r.net),
+          image: r.image, signedAt: r.signedAt,
+        })),
+      });
+    }
+
     /* ------------------------------------------------------------ PAGAR ---- */
     if (req.method === "POST") {
       const ahora = nowIso();
+
+      // La firma se valida ANTES de tocar nada: si se rechazara despues, los
+      // dias ya habrian quedado pagados mientras la app recibe un error y cree
+      // que no se pago.
+      const sign = "sign" in body && body.sign
+        ? parseDataJpeg(body.sign, MAX_SIGN, "La firma")
+        : { ok: true, value: null };
+      if (!sign.ok) return res.status(400).json({ error: sign.error });
 
       // Solo dias trabajados y todavia impagos. Las faltas no entran.
       const upd = await db.execute({
@@ -101,12 +147,34 @@ export default async function handler(req, res) {
         args: [siteId, workerId, from, to],
       });
       const dias = Number(sum.rows[0].t);
+
+      // Firma de recibido. Se guarda por lo que se entrega AHORA (lo liquidado
+      // en esta operacion menos los abonos), no por el total del rango: si una
+      // parte ya estaba pagada de antes, el trabajador no la recibe hoy y no
+      // tiene por que firmarla.
+      let firmado = false;
+      if (sign.value) {
+        const nuevo = Number((await db.execute({
+          sql: `SELECT COALESCE(SUM(paidAmount), 0) t FROM attendance WHERE workerId = ? AND paidAt = ?`,
+          args: [workerId, ahora],
+        })).rows[0].t);
+        await db.execute({
+          sql: `INSERT INTO payment_signs
+                  (workerId, paidAt, siteId, fromDay, toDay, amount, advances, net, image, signedAt, signedBy)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [workerId, ahora, siteId, from, to, nuevo, abonado,
+                 round2(nuevo - abonado), sign.value, ahora, me.id],
+        });
+        firmado = true;
+      }
+
       return res.status(200).json({
         ok: true,
         days: upd.rowsAffected,
         amount: dias,                                     // suman los dias liquidados
         advances: abonado,                                // lo ya adelantado
-        net: Math.round((dias - abonado) * 100) / 100,    // lo que se entrega en mano
+        net: round2(dias - abonado),                      // lo que se entrega en mano
+        signed: firmado,
         totalDaysPaid: Number(sum.rows[0].c),
       });
     }
@@ -127,20 +195,28 @@ export default async function handler(req, res) {
         args: [siteId, workerId, from, to],
       });
 
-      let abonos = 0;
+      let abonos = 0, firmas = 0;
       const ts = marcas.rows.map((r) => r.paidAt).filter(Boolean);
       if (ts.length) {
+        const huecos = ts.map(() => "?").join(",");
         const back = await db.execute({
           sql: `UPDATE advances SET settledAt = NULL, settledBy = NULL
-                 WHERE workerId = ? AND settledAt IN (${ts.map(() => "?").join(",")})`,
+                 WHERE workerId = ? AND settledAt IN (${huecos})`,
           args: [workerId, ...ts],
         });
         abonos = back.rowsAffected;
+        // La firma de recibido se va con su pago: un comprobante de algo que ya
+        // no existe solo puede confundir.
+        const delF = await db.execute({
+          sql: `DELETE FROM payment_signs WHERE workerId = ? AND paidAt IN (${huecos})`,
+          args: [workerId, ...ts],
+        });
+        firmas = delF.rowsAffected;
       }
-      return res.status(200).json({ ok: true, days: upd.rowsAffected, advances: abonos });
+      return res.status(200).json({ ok: true, days: upd.rowsAffected, advances: abonos, signs: firmas });
     }
 
-    res.setHeader("Allow", "POST, DELETE");
+    res.setHeader("Allow", "GET, POST, DELETE");
     return res.status(405).json({ error: "Método no permitido" });
   } catch (err) {
     return res.status(500).json({ error: String(err) });

@@ -11,13 +11,13 @@
 //  Entrar con:  jefe / demo1234
 // =============================================================================
 
-import { db, ensureSchema, nowIso } from "../lib/db.js";
+import { db, ensureSchema, nowIso, newRecoveryCode, normalizeRecovery } from "../lib/db.js";
 import { hashPassword, newToken } from "../lib/auth.js";
 import { today } from "../lib/day.js";
 
 await ensureSchema();
 
-for (const t of ["advances", "attendance_signs", "attendance", "worker_rates",
+for (const t of ["advances", "attendance_signs", "payment_signs", "attendance", "worker_rates",
                  "workers", "site_users", "sites", "users", "accounts"]) {
   await db.execute(`DELETE FROM ${t}`);
 }
@@ -35,10 +35,13 @@ const acc = await db.execute({
 });
 const accountId = Number(acc.lastInsertRowid);
 
+// El admin con su codigo de recuperacion, para poder probar tambien esa puerta.
+const codigoRec = newRecoveryCode();
 await db.execute({
-  sql: `INSERT INTO users (name, fullName, role, passwordHash, accountId, createdAt)
-        VALUES (?, ?, 'admin', ?, ?, ?)`,
-  args: ["jefe", "Marlon Obando", hashPassword("demo1234"), accountId, ahora],
+  sql: `INSERT INTO users (name, fullName, role, passwordHash, accountId, createdAt, recoveryHash, recoveryAt)
+        VALUES (?, ?, 'admin', ?, ?, ?, ?, ?)`,
+  args: ["jefe", "Marlon Obando", hashPassword("demo1234"), accountId, ahora,
+         hashPassword(normalizeRecovery(codigoRec)), ahora],
 });
 await db.execute({
   sql: `INSERT INTO users (name, fullName, role, passwordHash, accountId, createdAt)
@@ -47,8 +50,8 @@ await db.execute({
 });
 
 const obra = await db.execute({
-  sql: `INSERT INTO sites (name, address, accountId, useSignature, useQr, createdAt)
-        VALUES (?, ?, ?, 1, 1, ?)`,
+  sql: `INSERT INTO sites (name, address, accountId, useSignature, useQr, useSignPay, createdAt)
+        VALUES (?, ?, ?, 1, 1, 1, ?)`,
   args: ["Residencial Las Colinas", "Km 12 Carretera Masaya", accountId, ahora],
 });
 const siteId = Number(obra.lastInsertRowid);
@@ -114,5 +117,6 @@ await db.execute({
 
 console.log("Datos de ejemplo listos.");
 console.log("  Empresa: Constructora Los Pinos");
-console.log("  Obra:    Residencial Las Colinas (con firma y carnets encendidos)");
+console.log("  Obra:    Residencial Las Colinas (firma, carnets y firma de recibido encendidos)");
 console.log("  Entrar:  jefe / demo1234");
+console.log(`  Codigo de recuperacion de jefe: ${codigoRec}`);

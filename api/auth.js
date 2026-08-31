@@ -7,6 +7,11 @@
 //                                    la env var ALLOW_SIGNUP=0.
 //  POST   /api/auth?new=1            { name, password, fullName, role, siteIds }
 //                                    -> el admin crea un usuario DE SU CUENTA.
+//  POST   /api/auth?recover=1        { name, code, password } -> entrar con el
+//                                    CODIGO DE RECUPERACION y poner contraseña
+//                                    nueva. Devuelve sesion y un codigo nuevo.
+//  PUT    /api/auth?recovery=1       { currentPassword } -> genera (o renueva) MI
+//                                    codigo de recuperacion. Se enseña una sola vez.
 //  GET    /api/auth                  -> { me, account, users? } (users solo si admin).
 //  PUT    /api/auth?account=1        { name, logo } -> el admin cambia el nombre y
 //                                    el logo de SU empresa. `logo` es un data URI
@@ -21,10 +26,20 @@
 //  personal de otra cuenta. Dentro de la cuenta, al capataz se le asignan obras
 //  (siteIds); sin asignaciones no ve ninguna.
 //
-//  Anti fuerza bruta: 5 fallos -> cuenta bloqueada 15 minutos.
+//  Anti fuerza bruta: 5 fallos -> cuenta bloqueada 15 minutos. El codigo de
+//  recuperacion usa el MISMO contador que la contraseña: da igual por cual de
+//  las dos puertas se intente entrar a la fuerza.
+//
+//  CODIGO DE RECUPERACION. Sin correo configurado (ni ganas de depender de un
+//  servicio para esto), la unica forma de volver a entrar si el admin pierde su
+//  contraseña es un codigo guardado aparte, como los codigos de respaldo de
+//  cualquier app con doble factor. Se genera al crear la empresa, se enseña UNA
+//  sola vez y se guarda hasheado: ni mirando la base se puede leer. Es de un
+//  solo uso, y al usarlo se entrega uno nuevo para no quedarse otra vez sin
+//  salida.
 // =============================================================================
 
-import { db, ensureSchema, nowIso } from "../lib/db.js";
+import { db, ensureSchema, nowIso, newRecoveryCode, normalizeRecovery } from "../lib/db.js";
 import { readJson, clean, parseId, parseDataJpeg } from "../lib/http.js";
 import {
   hashPassword, verifyPassword, newToken,
@@ -71,7 +86,11 @@ export default async function handler(req, res) {
       if (!me) return deny(res);
       const acc = await db.execute({ sql: `SELECT name, logo FROM accounts WHERE id = ?`, args: [me.accountId] });
       const account = { id: me.accountId, name: acc.rows[0]?.name || null, logo: acc.rows[0]?.logo || null };
-      if (!isAdmin(me)) return res.status(200).json({ me, account });
+      // Si tengo codigo de recuperacion o no; nunca el codigo, que se enseña una
+      // sola vez al generarlo. Ajustes lo usa para avisar a quien no tiene.
+      const mio = await db.execute({ sql: `SELECT recoveryAt FROM users WHERE id = ?`, args: [me.id] });
+      const recovery = { has: !!mio.rows[0]?.recoveryAt, at: mio.rows[0]?.recoveryAt || null };
+      if (!isAdmin(me)) return res.status(200).json({ me, account, recovery });
 
       // Solo los usuarios de MI cuenta, cada uno con las obras que tiene asignadas.
       const rs = await db.execute({
@@ -91,7 +110,7 @@ export default async function handler(req, res) {
         porUsuario.get(k).push(Number(a.siteId));
       }
       return res.status(200).json({
-        me, account,
+        me, account, recovery,
         users: rs.rows.map((u) => ({ ...publicUser(u), siteIds: porUsuario.get(Number(u.id)) || [] })),
       });
     }
@@ -121,15 +140,19 @@ export default async function handler(req, res) {
       const acc = await db.execute({ sql: `INSERT INTO accounts (name, createdAt) VALUES (?, ?)`, args: [company, now] });
       const accountId = Number(acc.lastInsertRowid);
       const token = newToken();
+      // El primer admin es el unico usuario al que nadie mas puede rescatar: se
+      // le entrega su codigo aqui mismo, con la cuenta recien creada.
+      const code = newRecoveryCode();
       const ins = await db.execute({
-        sql: `INSERT INTO users (name, role, passwordHash, sessionToken, accountId, createdAt)
-              VALUES (?, 'admin', ?, ?, ?, ?)`,
-        args: [name, hashPassword(pw), token, accountId, now],
+        sql: `INSERT INTO users (name, role, passwordHash, sessionToken, accountId, createdAt, recoveryHash, recoveryAt)
+              VALUES (?, 'admin', ?, ?, ?, ?, ?, ?)`,
+        args: [name, hashPassword(pw), token, accountId, now,
+               hashPassword(normalizeRecovery(code)), now],
       });
       return res.status(201).json({
         user: { id: Number(ins.lastInsertRowid), name, fullName: null, role: "admin", active: 1, accountId },
         account: { id: accountId, name: company },
-        token, created: true,
+        token, created: true, recovery: code,
       });
     }
 
@@ -160,6 +183,55 @@ export default async function handler(req, res) {
       if ("siteIds" in body) await setUserSites(newId, body.siteIds, me.accountId);
       return res.status(201).json({
         user: { id: newId, name, fullName: clean(body.fullName), role, active: 1, accountId: me.accountId },
+      });
+    }
+
+    /* ------------------------------------------------- POST ?recover=1 ----- */
+    if (req.method === "POST" && req.query?.recover) {
+      const name = (body.name ?? "").toString().trim();
+      const code = normalizeRecovery(body.code);
+      const pw = (body.password ?? "").toString();
+      if (pw.length < 6 || pw.length > 64) {
+        return res.status(400).json({ error: "La contraseña debe tener entre 6 y 64 caracteres." });
+      }
+      const found = await db.execute({
+        sql: `SELECT id, name, fullName, role, active, accountId, recoveryHash, failedLogins, lockedUntil
+                FROM users WHERE name = ? COLLATE NOCASE`,
+        args: [name],
+      });
+      const u = found.rows[0];
+      // El mismo texto exista o no el usuario: por aqui tampoco se averigua
+      // quien tiene cuenta.
+      const malo = () => res.status(401).json({ error: "Usuario o código incorrectos." });
+      if (!u) return malo();
+      if (!Number(u.active)) return res.status(403).json({ error: "Tu usuario está desactivado. Habla con el administrador." });
+      if (u.lockedUntil && new Date(u.lockedUntil).getTime() > Date.now()) {
+        return res.status(429).json({ error: "Demasiados intentos. Espera unos minutos e intenta de nuevo." });
+      }
+      if (!u.recoveryHash || !verifyPassword(code, u.recoveryHash)) {
+        const fails = Number(u.failedLogins || 0) + 1;
+        const locked = fails >= MAX_FAILS ? new Date(Date.now() + LOCK_MS).toISOString() : null;
+        await db.execute({ sql: `UPDATE users SET failedLogins = ?, lockedUntil = ? WHERE id = ?`, args: [fails, locked, u.id] });
+        return malo();
+      }
+
+      // El codigo es de UN SOLO USO. Se entrega otro en el acto: quien acaba de
+      // recuperar su cuenta es justo quien no puede quedarse sin salida.
+      const nuevo = newRecoveryCode();
+      const token = newToken();
+      await db.execute({
+        sql: `UPDATE users SET passwordHash = ?, sessionToken = ?, failedLogins = 0, lockedUntil = NULL,
+                     recoveryHash = ?, recoveryAt = ?
+               WHERE id = ?`,
+        args: [hashPassword(pw), token, hashPassword(normalizeRecovery(nuevo)), nowIso(), u.id],
+      });
+      const acc = await db.execute({ sql: `SELECT id, name, logo FROM accounts WHERE id = ?`, args: [u.accountId] });
+      return res.status(200).json({
+        user: publicUser(u),
+        account: acc.rows[0]
+          ? { id: Number(acc.rows[0].id), name: acc.rows[0].name, logo: acc.rows[0].logo || null }
+          : null,
+        token, recovery: nuevo,
       });
     }
 
@@ -207,6 +279,26 @@ export default async function handler(req, res) {
           : null,
         token,
       });
+    }
+
+    /* ----------------------------------------------------- PUT ?recovery=1 */
+    if (req.method === "PUT" && req.query?.recovery) {
+      const me = await currentUser(req, body);
+      if (!me) return deny(res);
+      // Se pide la contraseña actual: con el telefono desbloqueado en la mano,
+      // sacar un codigo nuevo seria quedarse con la cuenta para siempre.
+      const rs = await db.execute({ sql: `SELECT passwordHash FROM users WHERE id = ?`, args: [me.id] });
+      if (!verifyPassword((body.currentPassword ?? "").toString(), rs.rows[0]?.passwordHash)) {
+        return res.status(401).json({ error: "La contraseña actual no coincide." });
+      }
+      // Generar uno nuevo INVALIDA el anterior: si no, un codigo apuntado en un
+      // papel viejo seguiria abriendo la cuenta.
+      const code = newRecoveryCode();
+      await db.execute({
+        sql: `UPDATE users SET recoveryHash = ?, recoveryAt = ? WHERE id = ?`,
+        args: [hashPassword(normalizeRecovery(code)), nowIso(), me.id],
+      });
+      return res.status(200).json({ ok: true, recovery: code });
     }
 
     /* --------------------------------------------- PUT datos de la empresa */

@@ -304,6 +304,16 @@ h3 { font-size:11px; font-weight:600; margin:22px 0 8px; color:var(--faint); tex
 .wk .firma svg { width:14px; height:14px; }
 .sign-view { width:100%; border:1px solid var(--line); border-radius:var(--r); background:#fff; }
 
+/* ------------------------------------------ codigo de recuperacion --
+   Se copia a mano de un papel, asi que va grande, monoespaciado y muy
+   separado: hay que poder distinguir cada caracter de un vistazo. */
+.code-box {
+  font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size:21px; font-weight:600; letter-spacing:.1em; text-align:center;
+  padding:18px 10px; border:1px dashed var(--line); border-radius:var(--r);
+  background:var(--soft); word-break:break-all; user-select:all;
+}
+
 /* --------------------------------------------------- estado de conexion --
    Solo aparece cuando hay algo que decir: sin señal, o marcas sin enviar. */
 .syncbar {
@@ -495,6 +505,10 @@ nav.bottom svg { width:21px; height:21px; }
     <button class="btn primary wide" type="submit" id="loginSubmit">Entrar</button>
     <div id="loginMsg"></div>
   </form>
+  <p class="muted" style="margin:14px 0 0; text-align:center;" id="forgotRow">
+    <button id="forgotBtn" style="background:none; border:0; padding:0; font:inherit;
+            color:inherit; text-decoration:underline; cursor:pointer;">¿Olvidaste tu contraseña?</button>
+  </p>
   <p class="muted" style="margin:16px 0 0; text-align:center;">
     <span id="switchText">¿Tu empresa todavía no está?</span>
     <button id="switchMode" style="background:none; border:0; padding:0; font:inherit;
@@ -712,6 +726,7 @@ const S = {
   day: todayObra(),
   workers: [],          // trabajadores del dia con su marca
   dirty: new Set(),     // ids con cambios sin guardar
+  recovery: null,       // { has, at } del codigo de recuperacion (null = sin saber)
   offline: false,       // la ultima llamada al servidor no llego
   syncing: false,       // hay una sincronizacion en curso
 };
@@ -723,6 +738,14 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
 function prettyDay(day) {
   const [y, m, d] = day.split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString("es", { weekday:"long", day:"numeric", month:"long" });
+}
+// Marca de tiempo del servidor (ISO) contada en la hora de la obra: se usa para
+// decir cuando se firmo algo.
+function fechaHora(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("es-NI", { timeZone: TZ_OBRA, day: "numeric", month: "short",
+                                     year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 function isWeekend(day) {
   const [y, m, d] = day.split("-").map(Number);
@@ -777,6 +800,7 @@ const ICONS = {
   cloud:     '<path d="M7.3 17.5a4.5 4.5 0 0 1 .4-9 6 6 0 0 1 11.4 1.7A4 4 0 0 1 18 17.5"/><path d="M12 11.5V20M9 14.5l3-3 3 3"/>',
   user:      '<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
   down:      '<path d="M5 9l7 7 7-7"/>',
+  shield:    '<path d="M12 2.8l7.5 2.9v5.5c0 4.4-3.1 8.4-7.5 9.5-4.4-1.1-7.5-5.1-7.5-9.5V5.7z"/><path d="M9 11.9l2.2 2.2 4.3-4.3"/>',
   inbox:     '<path d="M3 13h5l1.5 3h5L16 13h5"/><path d="M5.2 4.5h13.6a2 2 0 0 1 1.9 1.4L22 13v5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-5l1.3-7.1a2 2 0 0 1 1.9-1.4z"/>',
 };
 
@@ -1040,8 +1064,11 @@ $("switchMode").addEventListener("click", () => {
   $("loginSubmit").textContent = signupMode ? "Crear cuenta" : "Entrar";
   $("switchText").textContent = signupMode ? "¿Ya tienes cuenta?" : "¿Tu empresa todavía no está?";
   $("switchMode").textContent = signupMode ? "Entrar" : "Crear cuenta";
+  // Dando de alta una empresa no hay nada que recuperar todavia.
+  $("forgotRow").classList.toggle("hidden", signupMode);
   $("loginMsg").innerHTML = "";
 });
+$("forgotBtn").addEventListener("click", recoverScreen);
 
 $("loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1063,13 +1090,70 @@ $("loginForm").addEventListener("submit", async (e) => {
     localStorage.setItem("ao_me", JSON.stringify(S.me));
     localStorage.setItem("ao_account", JSON.stringify(S.account));
     $("loginPw").value = "";
-    // Empresa recien creada: no hay obras ni personal, se parte por ahi.
-    if (r.created) { await start(); return sitesScreen(); }
+    S.recovery = r.recovery ? { has: true, at: null } : S.recovery;
+    // Empresa recien creada: primero el codigo de recuperacion, que es la unica
+    // vez que se puede ver, y despues a crear la primera obra.
+    if (r.created) {
+      await start();
+      return r.recovery ? codigoScreen(r.recovery, { luego: sitesScreen }) : sitesScreen();
+    }
     await start();
   } catch (err) {
     $("loginMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`;
   } finally { btn.disabled = false; }
 });
+
+/* -------------------------- recuperar la cuenta --------------------------
+   Sin correo configurado, la llave de repuesto es el codigo que se entrego al
+   crear la empresa. Vale UNA vez: al usarlo deja poner contraseña nueva y
+   entrega otro codigo.
+-------------------------------------------------------------------------- */
+function recoverScreen() {
+  openModal(`
+    <h2>Entrar con el código</h2>
+    <p class="muted" style="margin:-6px 0 14px;">
+      Es el código de recuperación que guardaste al crear la empresa. Sirve una sola vez:
+      te deja poner una contraseña nueva y te entrega otro código para la próxima.
+    </p>
+    <form id="rForm" class="card pad">
+      <label class="field"><span>Usuario</span>
+        <input id="rName" required maxlength="20" autocapitalize="none" spellcheck="false"></label>
+      <label class="field"><span>Código de recuperación</span>
+        <input id="rCode" required placeholder="XXXX-XXXX-XXXX" autocapitalize="characters" spellcheck="false"></label>
+      <label class="field"><span>Nueva contraseña (mínimo 6)</span>
+        <input id="rPw" type="password" required minlength="6" maxlength="64" autocomplete="new-password"></label>
+      <div id="rMsg"></div>
+      <button class="btn primary wide" type="submit">Entrar y cambiar la contraseña</button>
+    </form>
+    <p class="muted" style="margin:14px 0 0;">
+      ¿No lo tienes? Si eres capataz, el administrador puede darte una contraseña nueva
+      desde <b>Ajustes → Usuarios del sistema</b>.
+    </p>
+  `);
+  $("rForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const r = await api("/api/auth?recover=1", { method: "POST", body: {
+        name: $("rName").value.trim(), code: $("rCode").value, password: $("rPw").value,
+      }});
+      S.token = r.token; S.me = r.user; S.account = r.account || null;
+      S.recovery = { has: true, at: null };
+      localStorage.setItem("ao_token", S.token);
+      localStorage.setItem("ao_me", JSON.stringify(S.me));
+      localStorage.setItem("ao_account", JSON.stringify(S.account));
+      closeModal();
+      await start();
+      toast("Contraseña cambiada");
+      // El de repuesto, en el acto: quien acaba de recuperar la cuenta es justo
+      // quien no puede quedarse otra vez sin salida.
+      if (r.recovery) codigoScreen(r.recovery);
+    } catch (err) {
+      $("rMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`;
+    } finally { btn.disabled = false; }
+  });
+}
 
 function logout() {
   S.token = ""; S.me = null; S.account = null; S.dirty.clear();
@@ -1211,6 +1295,9 @@ const REASONS = ["Falta", "Permiso", "Licencia", "Lluvia", "Feriado", "Accidente
 // La firma se pide solo en las obras que la tengan encendida.
 const firmaActiva = () => !!S.sites.find((x) => x.id === S.siteId)?.useSignature;
 const qrActivo = () => !!S.sites.find((x) => x.id === S.siteId)?.useQr;
+// Firmar al RECIBIR la plata no es lo mismo que firmar la asistencia del dia:
+// una obra puede querer solo una de las dos, asi que se enciende aparte.
+const firmaPagoActiva = () => !!S.sites.find((x) => x.id === S.siteId)?.useSignPay;
 
 const MARK_ICON = { P: icon("check"), M: '<span style="font-size:17px; line-height:1;">&#189;</span>', A: icon("cross") };
 const MARK_LABEL = { P: "Presente", M: "Medio", A: "Falta" };
@@ -1652,7 +1739,7 @@ function reportPdf(r) {
 }
 
 // Detalle de un trabajador: lo que trabajo dia a dia y cuanto le toca.
-function workerPdf(row, r, abonos = null, firmas = null) {
+function workerPdf(row, r, abonos = null, firmas = null, recibos = null) {
   const doc = new MiniPdf({ logo: logoParaPdf() });
 
   // Cada firma se registra una vez y despues se dibuja en la fila de su dia.
@@ -1661,6 +1748,13 @@ function workerPdf(row, r, abonos = null, firmas = null) {
     const bin = dataUriToBinary(uri);
     const size = bin && jpegSize(bin);
     if (size) idxFirma[dia] = doc.addImage({ bin, ...size });
+  }
+  // Las firmas de recibido (una por pago del periodo) van al final del papel.
+  const idxRecibo = {};
+  for (const rc of recibos || []) {
+    const bin = dataUriToBinary(rc.image);
+    const size = bin && jpegSize(bin);
+    if (size) idxRecibo[rc.paidAt] = doc.addImage({ bin, ...size });
   }
   const obra = S.sites.find((x) => x.id === S.siteId)?.name || "Obra";
   let y = pdfHeader(doc, FONT_OK(row.fullName), `${FONT_OK(obra)} · del ${r.from} al ${r.to}`);
@@ -1737,6 +1831,28 @@ function workerPdf(row, r, abonos = null, firmas = null) {
       y += 8; doc.line(M, y, 595 - M, y, { gray: 0.92 }); y += 14;
     }
   }
+
+  // Recibi conforme: la firma del dia de pago. Va al final, debajo de las
+  // cuentas, porque es justo lo que se esta firmando.
+  for (const rc of recibos || []) {
+    y += 26;
+    if (y > 842 - 150) { pdfFooter(doc, pag++); doc.newPage(); y = M + 40; }
+    doc.text(M, y, "RECIBÍ CONFORME", { size: 7.5, bold: true, gray: 0.45 });
+    y += 6; doc.line(M, y, 595 - M, y); y += 16;
+    doc.text(M, y, FONT_OK(
+      `Recibí de ${S.account?.name || "la empresa"} la cantidad de ${money(rc.net)}`), { size: 9.5 });
+    y += 14;
+    doc.text(M, y, FONT_OK(`por los días trabajados del ${rc.fromDay} al ${rc.toDay}${
+      rc.advances ? `, descontados ${money(rc.advances)} de abonos ya entregados` : ""}.`), { size: 9.5 });
+    y += 46;
+    // La firma se apoya SOBRE la linea, como en el papel.
+    if (idxRecibo[rc.paidAt] !== undefined) doc.drawImage(idxRecibo[rc.paidAt], M, y - 36, 150, 36);
+    doc.line(M, y, M + 190, y, { gray: 0.4 });
+    y += 12;
+    doc.text(M, y, FONT_OK(row.fullName), { size: 8.5 });
+    y += 11;
+    doc.text(M, y, FONT_OK(`Firmado el ${fechaHora(rc.signedAt)}`), { size: 8, gray: 0.55 });
+  }
   pdfFooter(doc, pag);
 
   const slug = row.fullName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w]+/g, "-");
@@ -1796,13 +1912,23 @@ function resumenTexto(row, r) {
 /* ---------------------------------- firma --------------------------------
    Lienzo para firmar con el dedo. Se exporta a JPEG sobre blanco porque es lo
    que se puede incrustar en el PDF, y pesa unos pocos KB.
+
+   Sirve para las dos firmas (la asistencia del dia y el recibo del pago), que
+   se diferencian solo en lo que dicen: `titulo`, `texto` y el boton.
+
+   Lo que devuelve la promesa:
+     "data:image/jpeg…"  firmo
+     ""                  quitar la firma que habia
+     null                seguir SIN firma (solo si se ofrece `omitir`)
+     undefined           cerro sin decidir: no se toca nada
 -------------------------------------------------------------------------- */
-function signaturePad(nombre, { actual = null } = {}) {
+function signaturePad(nombre, { actual = null, titulo = null, texto = null,
+                                ok = "Guardar firma", omitir = null } = {}) {
   return new Promise((resolve) => {
     openModal(`
-      <h2>Firma de ${esc(nombre)}</h2>
+      <h2>${esc(titulo || `Firma de ${nombre}`)}</h2>
       <p class="muted" style="margin:-6px 0 14px;">
-        Pásale el teléfono para que firme con el dedo.
+        ${esc(texto || "Pásale el teléfono para que firme con el dedo.")}
       </p>
       ${actual ? `<img class="sign-view" src="${esc(actual)}" alt="Firma actual" style="margin-bottom:12px;">
         <p class="muted" style="margin:-6px 0 14px;">Ya tiene una firma. Si firma de nuevo, reemplaza a la anterior.</p>` : ""}
@@ -1810,8 +1936,9 @@ function signaturePad(nombre, { actual = null } = {}) {
       <p class="sign-hint">Firmar aquí arriba</p>
       <div class="row" style="gap:8px; margin-top:14px;">
         <button class="btn grow" id="sClear">Borrar</button>
-        <button class="btn primary grow" id="sOk">Guardar firma</button>
+        <button class="btn primary grow" id="sOk">${esc(ok)}</button>
       </div>
+      ${omitir ? `<button class="btn wide" id="sSkip" style="margin-top:8px;">${esc(omitir)}</button>` : ""}
       ${actual ? `<button class="btn danger wide" id="sDel" style="margin-top:8px;">Quitar la firma</button>` : ""}
     `);
 
@@ -1871,6 +1998,8 @@ function signaturePad(nombre, { actual = null } = {}) {
       if (!hayTrazo) return toast("Todavía no hay ninguna firma", "err");
       cerrar(cv.toDataURL("image/jpeg", 0.8));
     });
+    const salta = $("sSkip");
+    if (salta) salta.addEventListener("click", () => cerrar(null));
     const del = $("sDel");
     if (del) del.addEventListener("click", async () => {
       if (await ask({ title: "¿Quitar la firma?", ok: "Quitar", cancel: "Cancelar", danger: true })) cerrar("");
@@ -2789,6 +2918,7 @@ function workerDetail(workerId) {
     ` : ""}
 
     <div id="advList"></div>
+    <div id="recList"></div>
 
     <h3>Día a día</h3>
     <div class="card">
@@ -2807,7 +2937,7 @@ function workerDetail(workerId) {
   // Los abonos se piden al vuelo para que salgan detallados en el PDF; si no hay
   // red, el PDF sale igual con el total que ya trae el reporte.
   const armarPdf = async () => {
-    let abonos = null, firmas = null;
+    let abonos = null, firmas = null, recibos = null;
     try {
       abonos = (await api(
         `/api/advances?siteId=${S.siteId}&workerId=${workerId}&from=${lastReport.from}&to=${lastReport.to}`
@@ -2820,7 +2950,13 @@ function workerDetail(workerId) {
         `/api/attendance?siteId=${S.siteId}&signs=${workerId}&from=${lastReport.from}&to=${lastReport.to}`
       )).signs;
     } catch { /* sin conexion */ }
-    return workerPdf(row, lastReport, abonos, firmas);
+    try {
+      // El comprobante de que recibio la plata, si llego a firmarlo.
+      recibos = (await api(
+        `/api/payments?siteId=${S.siteId}&workerId=${workerId}&from=${lastReport.from}&to=${lastReport.to}`
+      )).receipts;
+    } catch { /* sin conexion */ }
+    return workerPdf(row, lastReport, abonos, firmas, recibos);
   };
 
   $("pdfWBtn").addEventListener("click", async () => {
@@ -2871,17 +3007,47 @@ function workerDetail(workerId) {
     } catch { /* sin conexion: el detalle se muestra igual sin los abonos */ }
   })();
 
-  const pagar = async (deshacer) => {
+  // Firma de recibido del periodo. Se pregunta siempre que haya algo pagado, aunque
+  // la obra ya no pida firma: si en su momento se firmo, hay que poder verlo.
+  if (row.paid > 0) (async () => {
+    try {
+      const { receipts } = await api(
+        `/api/payments?siteId=${S.siteId}&workerId=${workerId}&from=${lastReport.from}&to=${lastReport.to}`);
+      const box = $("recList");
+      if (!box) return;
+      // Sin firmas y sin la casilla encendida no hay nada que decir.
+      if (!receipts.length && !firmaPagoActiva()) { box.innerHTML = ""; return; }
+      box.innerHTML = `
+        <h3>Recibí conforme</h3>
+        ${receipts.length ? `<div class="card">
+          ${receipts.map((rc) => `
+            <div class="list-item">
+              <div class="grow">
+                <div><b>${money(rc.net)}</b> recibidos</div>
+                <div class="muted">Firmado el ${esc(fechaHora(rc.signedAt))}</div>
+              </div>
+              <img class="sign-view" style="width:104px;" src="${esc(rc.image)}" alt="Firma de recibido">
+            </div>`).join("")}
+        </div>` : `<div class="card pad"><p class="muted" style="margin:0;">
+          Este pago se entregó sin firma. Para que quede firmado hay que deshacerlo y volver a pagarlo.
+        </p></div>`}`;
+    } catch { /* sin conexion: el detalle se muestra igual */ }
+  })();
+
+  // `firma` solo se manda al pagar: null = se paga sin ella.
+  const pagar = async (deshacer, firma = null) => {
     const q = `siteId=${S.siteId}&workerId=${workerId}&from=${lastReport.from}&to=${lastReport.to}`;
     try {
       const r = deshacer
         ? await api(`/api/payments?${q}`, { method: "DELETE" })
         : await api("/api/payments", { method: "POST", body: {
-            siteId: S.siteId, workerId, from: lastReport.from, to: lastReport.to } });
+            siteId: S.siteId, workerId, from: lastReport.from, to: lastReport.to,
+            ...(firma ? { sign: firma } : {}) } });
       toast(deshacer
         ? (r.days ? `${plural(r.days, "día", "días")} sin pagar de nuevo` : "No había nada que deshacer")
         : (r.days || r.advances
-            ? `Pagado: ${money(r.net)}${r.advances ? ` (${money(r.amount)} menos ${money(r.advances)} de abonos)` : ""}`
+            ? `Pagado${r.signed ? " y firmado" : ""}: ${money(r.net)}${
+                r.advances ? ` (${money(r.amount)} menos ${money(r.advances)} de abonos)` : ""}`
             : "No había nada que cambiar"));
       closeModal();
       await loadReport();
@@ -2891,7 +3057,7 @@ function workerDetail(workerId) {
 
   const pb = $("payBtn");
   if (pb) pb.addEventListener("click", async () => {
-    if (await ask({
+    if (!(await ask({
       title: "¿Marcar como pagado?",
       text: [
         `${row.fullName}, del ${lastReport.from} al ${lastReport.to}.`,
@@ -2901,7 +3067,23 @@ function workerDetail(workerId) {
         "El monto queda congelado: si después le subes el pago por día, esto no cambia.",
       ].filter(Boolean).join(" "),
       ok: "Marcar pagado", cancel: "Cancelar",
-    })) pagar(false);
+    }))) return;
+
+    // Donde la obra pide firma de recibido, se firma DESPUES de confirmar el
+    // monto: lo que se firma es esa cifra. Se puede pagar sin firma igual que la
+    // asistencia se puede guardar sin firmar; lo que no se puede es firmar sin
+    // haber visto cuanto.
+    let firma = null;
+    if (firmaPagoActiva()) {
+      firma = await signaturePad(row.fullName, {
+        titulo: "Recibí conforme",
+        texto: `Pásale el teléfono a ${row.fullName} para que firme que recibió ${money(row.pending)}.`,
+        ok: "Firmar y pagar",
+        omitir: "Pagar sin firma",
+      });
+      if (firma === undefined) return;          // cerró el lienzo: no se paga
+    }
+    pagar(false, firma);
   });
 
   const ub = $("unpayBtn");
@@ -3231,9 +3413,11 @@ const GUIA = [
       ["pasos", [
         "Toca al trabajador para ver el detalle día por día.",
         "Revisa el monto y toca Marcar como pagado.",
+        "Si la obra lo pide, le pasas el teléfono para que firme que recibió la plata.",
         "Si te equivocaste, en esa misma pantalla puedes deshacer el pago.",
       ]],
       ["nota", "Al pagar, el monto queda congelado. Si después le subes el pago por día, lo que ya cobró no cambia."],
+      ["nota", "La firma de recibido se activa por obra, en Ajustes, Obras: Pedir firma al entregar el pago. Se firma después de ver el monto, y sale impresa en su comprobante en PDF. Si el trabajador no está delante, puedes tocar Pagar sin firma."],
     ],
   },
   {
@@ -3257,6 +3441,19 @@ const GUIA = [
         "Toca Instalar en el teléfono.",
         "Sigue lo que te indique. Si no aparece la opción, ya está instalada.",
       ]],
+    ],
+  },
+  {
+    t: "Si olvidas tu contraseña",
+    b: [
+      ["p", "Al crear la empresa la aplicación te entrega un código de recuperación. Guárdalo: es la llave de repuesto de tu cuenta y no se puede volver a ver."],
+      ["pasos", [
+        "En la pantalla de entrada, toca ¿Olvidaste tu contraseña?",
+        "Escribe tu usuario, el código y la contraseña nueva.",
+        "Entras directo, y te damos otro código para la próxima vez.",
+      ]],
+      ["nota", "En Ajustes, Código de recuperación, puedes sacar el tuyo cuando quieras. Al generar uno nuevo, el anterior deja de servir."],
+      ["nota", "Si eres capataz y no tienes código, el administrador puede darte una contraseña nueva desde Ajustes, Usuarios del sistema."],
     ],
   },
   {
@@ -3499,6 +3696,8 @@ function renderSettings() {
     <h3>Cuenta</h3>
     <div class="card">
       ${item("pw", "key", "Cambiar mi contraseña")}
+      ${item("rec", "shield", "Código de recuperación",
+             S.recovery && !S.recovery.has ? '<span class="badge off">sin código</span>' : "")}
       <button class="list-item" data-act="out">
         ${icon("logout")}
         <span class="grow" style="color:var(--bad);">Cerrar sesión</span>
@@ -3521,6 +3720,7 @@ function renderSettings() {
       sites: sitesScreen,
       users: usersScreen,
       pw: passwordScreen,
+      rec: recoveryScreen,
       out: async () => {
         const n = queueGet().length;
         if (await ask({
@@ -3713,10 +3913,16 @@ function siteForm(s) {
             <span class="muted" style="display:block;">Al marcarlo presente, firma con el dedo. Queda como evidencia.</span>
           </span>
         </label>
-        <label class="row" style="margin-bottom:6px; gap:8px; align-items:flex-start;">
+        <label class="row" style="margin-bottom:10px; gap:8px; align-items:flex-start;">
           <input type="checkbox" id="sQr" ${s.useQr ? "checked" : ""} style="width:20px; height:20px; margin-top:2px;">
           <span class="grow">Marcar escaneando el carnet
             <span class="muted" style="display:block;">Cada trabajador con su tarjeta. Hay que imprimirlas y repartirlas antes.</span>
+          </span>
+        </label>
+        <label class="row" style="margin-bottom:6px; gap:8px; align-items:flex-start;">
+          <input type="checkbox" id="sSignPay" ${s.useSignPay ? "checked" : ""} style="width:20px; height:20px; margin-top:2px;">
+          <span class="grow">Pedir firma al entregar el pago
+            <span class="muted" style="display:block;">El sábado firma que recibió la plata. La firma sale en su comprobante en PDF.</span>
           </span>
         </label>`}
       <div id="sMsg"></div>
@@ -3731,6 +3937,7 @@ function siteForm(s) {
       body.active = $("sActive").checked;
       body.useSignature = $("sSign").checked;
       body.useQr = $("sQr").checked;
+      body.useSignPay = $("sSignPay").checked;
     }
     try {
       const r = await api(isNew ? "/api/sites" : `/api/sites?id=${s.id}`, { method: isNew ? "POST" : "PUT", body });
@@ -3884,6 +4091,84 @@ function passwordScreen() {
   });
 }
 
+/* ----------------------- codigo de recuperacion --------------------------
+   La llave de repuesto de la cuenta. Se enseña UNA sola vez, cuando se genera:
+   en el servidor solo queda su hash, igual que con la contraseña.
+-------------------------------------------------------------------------- */
+function recoveryScreen() {
+  const tiene = !!S.recovery?.has;
+  openModal(`
+    <h2>Código de recuperación</h2>
+    <p class="muted" style="margin:-6px 0 14px;">
+      ${tiene
+        ? `Ya tienes uno${S.recovery?.at ? `, del ${esc(fechaHora(S.recovery.at))}` : ""}. Si no lo encuentras,
+           aquí se genera otro y el anterior deja de servir.`
+        : `Todavía no tienes. Es la forma de volver a entrar si olvidas tu contraseña
+           y no hay quien te la cambie.`}
+    </p>
+    <form id="gForm" class="card pad">
+      <label class="field"><span>Tu contraseña actual</span>
+        <input id="gPw" type="password" required autocomplete="current-password"></label>
+      <div id="gMsg"></div>
+      <button class="btn primary wide" type="submit">${tiene ? "Generar uno nuevo" : "Generar mi código"}</button>
+    </form>
+    <p class="muted" style="margin:14px 0 0;">
+      Se pide la contraseña porque con el teléfono desbloqueado en la mano, sacar un código
+      nuevo sería quedarse con la cuenta.
+    </p>`);
+  $("gForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const r = await api("/api/auth?recovery=1", { method: "PUT", body: { currentPassword: $("gPw").value } });
+      S.recovery = { has: true, at: new Date().toISOString() };
+      if (S.view === "settings") renderSettings();
+      codigoScreen(r.recovery);
+    } catch (err) {
+      $("gMsg").innerHTML = `<div class="msg err">${esc(err.message)}</div>`;
+    } finally { btn.disabled = false; }
+  });
+}
+
+// Enseña el codigo recien generado. Insiste en guardarlo porque no se puede
+// volver a ver, y ofrece las dos formas de llevarselo: copiar y bajarlo.
+function codigoScreen(code, { luego = null } = {}) {
+  openModal(`
+    <h2>Guarda este código</h2>
+    <p class="muted" style="margin:-6px 0 14px;">
+      Es la llave de repuesto de tu cuenta. <b>No se puede volver a ver</b>: anótalo en un papel
+      o guárdalo donde no se pierda.
+    </p>
+    <div class="code-box">${esc(code)}</div>
+    <div class="row" style="gap:8px; margin-top:12px;">
+      <button class="btn grow" id="codeCopy">Copiar</button>
+      <button class="btn grow" id="codeSave">${icon("download")}Descargar</button>
+    </div>
+    <button class="btn primary wide" id="codeOk" style="margin-top:8px;">Ya lo guardé</button>
+  `);
+  $("codeCopy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(code); toast("Código copiado"); }
+    catch { toast("Cópialo a mano: el navegador no dejó copiarlo", "err"); }
+  });
+  $("codeSave").addEventListener("click", () => {
+    const txt = [
+      "Asistencia en Obra — código de recuperación",
+      "",
+      `Empresa: ${S.account?.name || "—"}`,
+      `Usuario: ${S.me?.name || "—"}`,
+      `Código:  ${code}`,
+      "",
+      "Sirve UNA vez, para volver a entrar si olvidas la contraseña.",
+    ].join("\n");
+    download(new Blob([txt], { type: "text/plain" }), `codigo-recuperacion-${S.me?.name || "cuenta"}.txt`);
+  });
+  const salir = () => { closeModal(); if (luego) luego(); };
+  $("codeOk").addEventListener("click", salir);
+  // Cerrar con la X tambien tiene que dejar seguir el camino que venia detras.
+  if (luego) $("modalClose").addEventListener("click", luego);
+}
+
 $("meBtn").addEventListener("click", () => setView("settings"));
 
 /* ===========================================================================
@@ -3951,8 +4236,8 @@ if ("serviceWorker" in navigator) {
   await start();
 
   try {
-    const { me, account } = await api("/api/auth");
-    S.me = me; S.account = account || null;
+    const { me, account, recovery } = await api("/api/auth");
+    S.me = me; S.account = account || null; S.recovery = recovery || null;
     localStorage.setItem("ao_me", JSON.stringify(me));
     localStorage.setItem("ao_account", JSON.stringify(S.account));
     paintBrand();

@@ -3,11 +3,12 @@
 //
 //  GET    /api/sites[?all=1]   -> obras activas (all=1 incluye las cerradas; admin).
 //  POST   /api/sites           { name, address }        -> crear (admin).
-//  PUT    /api/sites?id=       { name, address, active, useSignature, useQr } -> editar (admin).
+//  PUT    /api/sites?id=       { name, address, active, useSignature, useQr,
+//                                useSignPay } -> editar (admin).
 //
-//  `useSignature` enciende la firma del trabajador al pasar lista y `useQr` el
-//  marcado escaneando el carnet. Los dos van por obra: se activan solo donde se
-//  usan.
+//  `useSignature` enciende la firma del trabajador al pasar lista, `useQr` el
+//  marcado escaneando el carnet y `useSignPay` la firma de recibido al entregar
+//  la plata. Los tres van por obra: se activan solo donde se usan.
 //  DELETE /api/sites?id=       -> cierra la obra (active = 0). No borra historial.
 // =============================================================================
 
@@ -29,7 +30,7 @@ export default async function handler(req, res) {
       // ademas asignadas a el. Cada una con su conteo de personal activo.
       const scope = siteScope(me);
       const rs = await db.execute({
-        sql: `SELECT s.id, s.name, s.address, s.active, s.useSignature, s.useQr, s.createdAt,
+        sql: `SELECT s.id, s.name, s.address, s.active, s.useSignature, s.useQr, s.useSignPay, s.createdAt,
                      (SELECT COUNT(*) FROM workers w WHERE w.siteId = s.id AND w.active = 1) AS workers
                 FROM sites s
                WHERE ${scope.sql} ${all ? "" : "AND s.active = 1"}
@@ -42,6 +43,7 @@ export default async function handler(req, res) {
           active: Number(s.active), workers: Number(s.workers),
           useSignature: !!Number(s.useSignature),
           useQr: !!Number(s.useQr),
+          useSignPay: !!Number(s.useSignPay),
         })),
       });
     }
@@ -60,7 +62,7 @@ export default async function handler(req, res) {
       return res.status(201).json({
         site: {
           id: Number(ins.lastInsertRowid), name, address: clean(body.address, 160),
-          active: 1, workers: 0, useSignature: false, useQr: false,
+          active: 1, workers: 0, useSignature: false, useQr: false, useSignPay: false,
         },
       });
     }
@@ -80,6 +82,7 @@ export default async function handler(req, res) {
       if ("active" in body) { sets.push("active = ?"); args.push(body.active ? 1 : 0); }
       if ("useSignature" in body) { sets.push("useSignature = ?"); args.push(body.useSignature ? 1 : 0); }
       if ("useQr" in body) { sets.push("useQr = ?"); args.push(body.useQr ? 1 : 0); }
+      if ("useSignPay" in body) { sets.push("useSignPay = ?"); args.push(body.useSignPay ? 1 : 0); }
       if (!sets.length) return res.status(400).json({ error: "Nada que actualizar." });
       args.push(id);
       const upd = await db.execute({ sql: `UPDATE sites SET ${sets.join(", ")} WHERE id = ?`, args });

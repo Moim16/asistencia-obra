@@ -75,6 +75,74 @@ check("contraseña incorrecta -> 401", (await call(auth, { method: "POST", body:
 check("usuario inexistente -> 401", (await call(auth, { method: "POST", body: { name: "nadie", password: "obra1234" } })).status === 401);
 
 /* ========================================================================== */
+section("Codigo de recuperacion");
+
+// Empresa aparte: recuperar cambia la contraseña y el token, y no vale la pena
+// arrastrar eso por el resto de las pruebas.
+r = await call(auth, { method: "POST", query: { signup: "1" },
+  body: { company: "Constructora Tres", name: "jefe3", password: "obra1234" } });
+const C = { token: r.body.token, userId: r.body.user.id };
+let codigo = r.body.recovery;
+check("crear la empresa entrega un codigo de recuperacion",
+  /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(codigo || ""), JSON.stringify(codigo));
+
+r = await call(auth, { token: C.token });
+check("el codigo NO se puede volver a leer, solo saber que existe",
+  r.body.recovery?.has === true && !("code" in (r.body.recovery || {})), JSON.stringify(r.body.recovery));
+
+check("un codigo equivocado no abre nada",
+  (await call(auth, { method: "POST", query: { recover: "1" },
+    body: { name: "jefe3", code: "AAAA-BBBB-CCCC", password: "nueva123" } })).status === 401);
+check("un usuario que no existe da el mismo error",
+  (await call(auth, { method: "POST", query: { recover: "1" },
+    body: { name: "nadie", code: codigo, password: "nueva123" } })).status === 401);
+check("recuperar con una contraseña muy corta -> 400",
+  (await call(auth, { method: "POST", query: { recover: "1" },
+    body: { name: "jefe3", code: codigo, password: "123" } })).status === 400);
+
+// Se escribe en minusculas y con espacios a proposito: asi lo copia cualquiera
+// de un papel.
+const comoLoEscriben = codigo.toLowerCase().replace(/-/g, " ");
+r = await call(auth, { method: "POST", query: { recover: "1" },
+  body: { name: "jefe3", code: comoLoEscriben, password: "recuperada1" } });
+check("con el codigo bueno se entra y se cambia la contraseña",
+  r.status === 200 && !!r.body.token, JSON.stringify(r.body));
+check("y se entrega un codigo NUEVO para la proxima vez",
+  !!r.body.recovery && r.body.recovery !== codigo, JSON.stringify(r.body.recovery));
+const codigo2 = r.body.recovery;
+C.token = r.body.token;
+
+r = await call(auth, { method: "POST", body: { name: "jefe3", password: "recuperada1" } });
+check("la contraseña nueva entra", r.status === 200, JSON.stringify(r.body));
+C.token = r.body.token;                 // entrar renueva el token de sesion
+check("la vieja ya no", (await call(auth, { method: "POST", body: { name: "jefe3", password: "obra1234" } })).status === 401);
+check("el codigo usado no sirve dos veces",
+  (await call(auth, { method: "POST", query: { recover: "1" },
+    body: { name: "jefe3", code: codigo, password: "otramas1" } })).status === 401);
+
+// Renovar el codigo desde Ajustes: exige la contraseña actual.
+check("sin la contraseña actual no se genera otro codigo",
+  (await call(auth, { method: "PUT", query: { recovery: "1" }, token: C.token,
+    body: { currentPassword: "loquesea" } })).status === 401);
+r = await call(auth, { method: "PUT", query: { recovery: "1" }, token: C.token,
+  body: { currentPassword: "recuperada1" } });
+check("con ella si", r.status === 200 && !!r.body.recovery && r.body.recovery !== codigo2, JSON.stringify(r.body));
+codigo = r.body.recovery;
+check("y el anterior deja de valer",
+  (await call(auth, { method: "POST", query: { recover: "1" },
+    body: { name: "jefe3", code: codigo2, password: "otramas1" } })).status === 401);
+
+// A un capataz lo rescata su admin, asi que no se le crea codigo hasta que lo
+// pida el mismo.
+await call(auth, { method: "POST", query: { new: "1" }, token: C.token,
+  body: { name: "sincodigo", password: "capataz1", role: "foreman" } });
+const SC = { token: (await call(auth, { method: "POST", body: { name: "sincodigo", password: "capataz1" } })).body.token };
+check("un usuario creado por el admin no trae codigo",
+  (await call(auth, { token: SC.token })).body.recovery?.has === false);
+r = await call(auth, { method: "PUT", query: { recovery: "1" }, token: SC.token, body: { currentPassword: "capataz1" } });
+check("pero puede sacarse el suyo", r.status === 200 && !!r.body.recovery, JSON.stringify(r.body));
+
+/* ========================================================================== */
 section("Obras y aislamiento entre empresas");
 
 const obraA1 = (await call(sites, { method: "POST", token: A.token, body: { name: "Edificio Los Aromos", address: "Av. Central 123" } })).body.site.id;
@@ -503,6 +571,73 @@ await call(payments, { method: "POST", token: A.token, body: { siteId: obraA2, w
 await call(workers, { method: "DELETE", token: A.token, query: { id: abo } });
 
 /* ========================================================================== */
+section("Firma al recibir el pago");
+
+r = await call(sites, { token: A.token });
+check("la firma de recibido viene apagada al crear la obra",
+  r.body.sites.every((x) => x.useSignPay === false), JSON.stringify(r.body.sites.map((x) => [x.name, x.useSignPay])));
+await call(sites, { method: "PUT", token: A.token, query: { id: obraA2 }, body: { useSignPay: true } });
+check("se enciende por obra, como la firma diaria",
+  (await call(sites, { token: A.token })).body.sites.find((x) => x.id === obraA2).useSignPay === true);
+
+// Trabajador limpio: 1 dia completo + medio dia a 400 = 600, con 100 de abono.
+const rec = (await call(workers, { method: "POST", token: A.token,
+  body: { siteId: obraA2, fullName: "Pedro Recibo", dailyRate: 400, rateFrom: day(-10) } })).body.worker.id;
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA2, day: day(-3), marks: [{ workerId: rec, status: "P" }] } });
+await call(attendance, { method: "POST", token: A.token, body: { siteId: obraA2, day: day(-2), marks: [{ workerId: rec, status: "M" }] } });
+await call(advances, { method: "POST", token: A.token, body: { siteId: obraA2, workerId: rec, amount: 100, day: day(-2) } });
+
+r = await call(payments, { token: A.token, query: { siteId: obraA2, workerId: rec, from: day(-10), to: day(0) } });
+check("sin pagar todavia no hay comprobante", r.status === 200 && r.body.receipts.length === 0, JSON.stringify(r.body));
+
+// Una firma invalida NO puede dejar los dias pagados: se rechaza antes de tocar
+// nada.
+check("un PNG como firma de recibido se rechaza",
+  (await call(payments, { method: "POST", token: A.token, body: { siteId: obraA2, workerId: rec,
+    from: day(-10), to: day(0), sign: "data:image/png;base64,iVBORw0KGgo=" } })).status === 400);
+r = await call(report, { token: A.token, query: { siteId: obraA2, from: day(-10), to: day(0) } });
+check("y el pago no se llego a hacer", r.body.rows.find((x) => x.workerId === rec).paid === 0,
+  JSON.stringify(r.body.rows.find((x) => x.workerId === rec)));
+
+r = await call(payments, { method: "POST", token: A.token,
+  body: { siteId: obraA2, workerId: rec, from: day(-10), to: day(0), sign: JPEG_1PX } });
+check("pagar con firma responde que quedo firmado", r.body.signed === true, JSON.stringify(r.body));
+check("y en mano recibe 600 menos 100 de abono", r.body.net === 500, JSON.stringify(r.body));
+
+r = await call(payments, { token: A.token, query: { siteId: obraA2, workerId: rec, from: day(-10), to: day(0) } });
+const comp = r.body.receipts[0];
+check("el comprobante guarda el periodo y los montos congelados",
+  r.body.receipts.length === 1 && comp.amount === 600 && comp.advances === 100 && comp.net === 500, JSON.stringify(comp));
+check("y la imagen de la firma", comp.image === JPEG_1PX);
+
+await call(auth, { method: "PUT", token: A.token, query: { id: capatazId }, body: { siteIds: [obraA1, obraA2] } });
+check("el capataz puede ver el comprobante (el PDF lo saca el tambien)",
+  (await call(payments, { token: F.token, query: { siteId: obraA2, workerId: rec, from: day(-10), to: day(0) } })).status === 200);
+check("pero sigue sin poder pagar",
+  (await call(payments, { method: "POST", token: F.token, body: { siteId: obraA2, workerId: rec, from: day(-10), to: day(0) } })).status === 403);
+await call(auth, { method: "PUT", token: A.token, query: { id: capatazId }, body: { siteIds: [obraA1] } });
+
+check("otra empresa no puede leer mis comprobantes",
+  (await call(payments, { token: B.token, query: { siteId: obraA2, workerId: rec, from: day(-10), to: day(0) } })).status === 404);
+
+// Deshacer el pago tiene que llevarse la firma: un comprobante de algo que ya no
+// existe solo confunde.
+r = await call(payments, { method: "DELETE", token: A.token, query: { siteId: obraA2, workerId: rec, from: day(-10), to: day(0) } });
+check("deshacer el pago borra tambien su firma", r.body.signs === 1, JSON.stringify(r.body));
+check("y el comprobante ya no aparece",
+  (await call(payments, { token: A.token, query: { siteId: obraA2, workerId: rec, from: day(-10), to: day(0) } })).body.receipts.length === 0);
+check("el abono vuelve a estar pendiente", r.body.advances === 1, JSON.stringify(r.body));
+
+// La firma es opcional incluso donde la obra la pide: si el trabajador no esta
+// delante, se paga igual y queda constancia de que ese pago no se firmo.
+r = await call(payments, { method: "POST", token: A.token, body: { siteId: obraA2, workerId: rec, from: day(-10), to: day(0) } });
+check("se puede pagar sin firma", r.body.signed === false && r.body.net === 500, JSON.stringify(r.body));
+check("y ese pago queda sin comprobante firmado",
+  (await call(payments, { token: A.token, query: { siteId: obraA2, workerId: rec, from: day(-10), to: day(0) } })).body.receipts.length === 0);
+
+await call(workers, { method: "DELETE", token: A.token, query: { id: rec } });
+
+/* ========================================================================== */
 section("Bajas y traslados");
 
 await call(workers, { method: "DELETE", token: A.token, query: { id: ana } });
@@ -527,7 +662,7 @@ check("la empresa no puede quedarse sin admin", r.status === 400, JSON.stringify
 
 /* ========================================================================== */
 if (!process.argv.includes("--keep")) {
-  for (const t of ["advances", "attendance_signs", "attendance", "worker_rates", "workers", "site_users", "sites", "users", "accounts"]) {
+  for (const t of ["advances", "attendance_signs", "payment_signs", "attendance", "worker_rates", "workers", "site_users", "sites", "users", "accounts"]) {
     await db.execute(`DELETE FROM ${t}`);
   }
   console.log("\nDatos de prueba borrados (usa --keep para conservarlos).");
