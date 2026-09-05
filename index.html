@@ -342,6 +342,17 @@ h3 { font-size:11px; font-weight:600; margin:22px 0 8px; color:var(--faint); tex
 .tbl tr.clickable:hover td { background:var(--soft); }
 .scroll-x { overflow-x:auto; -webkit-overflow-scrolling:touch; }
 
+/* Total en plata del periodo: en la pestaña Dias la tabla solo cuenta jornadas,
+   asi que el monto va debajo, en una linea sola y grande. */
+.rep-total {
+  display:flex; align-items:baseline; justify-content:space-between; gap:12px;
+  margin-top:14px; padding-top:13px; border-top:1px solid var(--line-2);
+}
+.rep-total span { font-size:13px; color:var(--muted); font-weight:500; }
+.rep-total b {
+  font-size:19px; font-weight:600; color:var(--ink); font-variant-numeric:tabular-nums;
+}
+
 /* -------------------------------------------------------------- bottom nav */
 nav.bottom {
   position:fixed; left:0; right:0; bottom:0; z-index:20;
@@ -2839,7 +2850,11 @@ function renderReport(r) {
           <td>${r.totals.advances ? "-" + money(r.totals.advances) : "—"}</td>
           <td>${money(r.totals.pending)}</td>
         </tr></tfoot>
-      </table></div>`;
+      </table></div>
+      <div class="rep-total">
+        <span>Total a recibir</span>
+        <b${r.totals.pending < 0 ? ' style="color:var(--bad);"' : ""}>${money(r.totals.pending)}</b>
+      </div>`;
     const ab = $("advBtn");
     if (ab) ab.addEventListener("click", () => advanceForm());
     return;
@@ -2864,7 +2879,11 @@ function renderReport(r) {
         <td>${r.totals.P}</td><td>${r.totals.M}</td><td>${r.totals.A}</td>
         <td>${fmtDays(r.totals.worked)}</td>
       </tr></tfoot>
-    </table>`;
+    </table>
+    <div class="rep-total">
+      <span>Monto del período</span>
+      <b>${money(r.totals.earned)}</b>
+    </div>`;
 }
 
 // Detalle dia a dia de un trabajador, con lo que vale cada dia y si ya se pago.
